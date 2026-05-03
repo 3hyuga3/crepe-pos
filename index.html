@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+<meta name="theme-color" content="#0C0C0D"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<title>🥞 ブリュレクレープ POS</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;margin:0;padding:0}
+body{background:#0C0C0D;color:#F2EDE4}
+input:focus{outline:none}
+input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
+@keyframes slideUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+.bp:active{transform:scale(.95);opacity:.82}
+::-webkit-scrollbar{width:3px}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,.1);border-radius:3px}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useCallback } = React;
+
+// Firebase初期化
+firebase.initializeApp({
+  apiKey:            "AIzaSyD2qxIpd1Lo6OKqeN52NC8DPTOudW39qVM",
+  authDomain:        "mayfes2026-pos.firebaseapp.com",
+  databaseURL:       "https://mayfes2026-pos-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId:         "mayfes2026-pos",
+  storageBucket:     "mayfes2026-pos.firebasestorage.app",
+  messagingSenderId: "369992888725",
+  appId:             "1:369992888725:web:4f1fcd5fc02681c93c869c",
+});
+const db = firebase.database();
+const ROOT = 'gosaifest2026';
+
+const dbSet = (key, val) => db.ref(`${ROOT}/${key}`).set(JSON.stringify(val));
+const dbListen = (key, cb) => {
+  const r = db.ref(`${ROOT}/${key}`);
+  r.on('value', snap => { if(snap.exists()) { try { cb(JSON.parse(snap.val())); } catch{} } });
+  return () => r.off();
+};
+const listenConnected = (cb) => {
+  const r = db.ref('.info/connected');
+  r.on('value', snap => cb(snap.val() === true));
+  return () => r.off();
+};
+
+const DEVICE_ID = '端末-' + Math.random().toString(36).substr(2,4).toUpperCase();
+const INIT_STOCK = {1:{vanilla:210,choco:140,matcha:70},2:{vanilla:140,choco:140,matcha:70}};
+const FLAVORS = [
+  {id:'vanilla',name:'バニラ',icon:'🍮',color:'#D4A844',glow:'rgba(212,168,68,.4)',bg:'rgba(212,168,68,.09)'},
+  {id:'choco',  name:'チョコ', icon:'🍫',color:'#C07840',glow:'rgba(192,120,64,.4)',bg:'rgba(192,120,64,.09)'},
+  {id:'matcha', name:'抹茶',  icon:'🍵',color:'#72A83C',glow:'rgba(114,168,60,.4)',bg:'rgba(114,168,60,.09)'},
+];
+const PRICES = [700,600,500];
+const DENOMS = [
+  {v:10000,l:'¥10,000',icon:'💴'},{v:5000,l:'¥5,000',icon:'💴'},
+  {v:1000,l:'¥1,000',icon:'💵'},{v:500,l:'¥500',icon:'🪙'},
+  {v:100,l:'¥100',icon:'🪙'},{v:50,l:'¥50',icon:'🪙'},{v:10,l:'¥10',icon:'🪙'},
+];
+const EMPTY_CART = {vanilla:0,choco:0,matcha:0};
+const C = {
+  bg:'#0C0C0D',surface:'#141416',surfaceHi:'#1C1C1F',
+  border:'rgba(255,255,255,.07)',borderMd:'rgba(255,255,255,.12)',
+  gold:'#D4A844',text:'#F2EDE4',muted:'rgba(242,237,228,.45)',dim:'rgba(242,237,228,.22)',
+  green:'#5CB870',yellow:'#E8A830',red:'#E05858',blue:'#6AACD4',purple:'#9E88D8',teal:'#48C4A8',
+};
+
+function ChangeCalc() {
+  const font = "'Hiragino Sans',sans-serif";
+  const [cp,setCp]=useState(700);const [cq,setCq]=useState(1);const [cr,setCr]=useState('');
+  const total=cp*cq;
+  const change=cr&&parseInt(cr)>=total?parseInt(cr)-total:null;
+  const short=cr&&parseInt(cr)<total?total-parseInt(cr):null;
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:10}}>
+      <div style={{display:'flex',gap:10,alignItems:'flex-end'}}>
+        <div style={{flex:1}}>
+          <div style={{fontSize:9,color:C.dim,letterSpacing:'.12em',marginBottom:6}}>価格</div>
+          <div style={{display:'flex',gap:5}}>
+            {PRICES.map(p=>(
+              <button key={p} onClick={()=>setCp(p)}
+                style={{flex:1,background:cp===p?'rgba(212,168,68,.25)':'rgba(255,255,255,.06)',color:cp===p?C.gold:C.muted,border:`1px solid ${cp===p?'rgba(212,168,68,.4)':'transparent'}`,borderRadius:8,padding:'7px 0',fontSize:11,fontWeight:700,cursor:'pointer'}}>
+                ¥{p}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <div style={{fontSize:9,color:C.dim,marginBottom:6}}>個数</div>
+          <div style={{display:'flex',alignItems:'center',gap:5}}>
+            <button onClick={()=>setCq(q=>Math.max(1,q-1))} style={{background:C.surfaceHi,border:'none',color:C.text,borderRadius:7,width:28,height:28,fontSize:14,cursor:'pointer'}}>−</button>
+            <span style={{minWidth:22,textAlign:'center',fontSize:16,fontWeight:700}}>{cq}</span>
+            <button onClick={()=>setCq(q=>q+1)} style={{background:C.surfaceHi,border:'none',color:C.text,borderRadius:7,width:28,height:28,fontSize:14,cursor:'pointer'}}>＋</button>
+          </div>
+        </div>
+      </div>
+      <div style={{display:'flex',justifyContent:'space-between',padding:'8px 12px',borderRadius:10,background:'rgba(212,168,68,.08)',border:'1px solid rgba(212,168,68,.15)'}}>
+        <span style={{fontSize:12,color:C.muted}}>合計</span>
+        <span style={{fontWeight:800,fontSize:16,color:C.gold}}>¥{total.toLocaleString()}</span>
+      </div>
+      <input type="number" inputMode="numeric" placeholder="受取金額を入力" value={cr} onChange={e=>setCr(e.target.value)}
+        style={{width:'100%',background:'rgba(255,255,255,.06)',border:`1px solid ${C.borderMd}`,borderRadius:11,padding:'10px 14px',color:C.text,fontSize:16}}/>
+      {cr&&(
+        <div style={{padding:'12px 14px',borderRadius:11,background:change!==null?'rgba(92,184,112,.12)':'rgba(224,88,88,.12)',border:`1px solid ${change!==null?'rgba(92,184,112,.3)':'rgba(224,88,88,.3)'}`,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <span style={{fontSize:13,color:C.muted}}>{change!==null?'お釣り':'不足額'}</span>
+          <span style={{fontSize:26,fontWeight:800,color:change!==null?C.green:C.red}}>¥{(change!==null?change:short).toLocaleString()}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function App() {
+  const [sales,setSales]=useState([]);
+  const [accounts,setAccounts]=useState({});
+  const [carryover,setCarryover]=useState({...EMPTY_CART});
+  const [register,setRegister]=useState(Object.fromEntries(DENOMS.map(d=>[d.v,0])));
+  const [connected,setConnected]=useState(false);
+  const [day,setDay]=useState(1);
+  const [tab,setTab]=useState('sale');
+  const [cart,setCart]=useState({...EMPTY_CART});
+  const [price,setPrice]=useState(700);
+  const [payType,setPayType]=useState('cash');
+  const [creditName,setCreditName]=useState('');
+  const [received,setReceived]=useState('');
+  const [toast,setToast]=useState(null);
+  const [payModal,setPayModal]=useState(null);
+  const [payAmt,setPayAmt]=useState('');
+  const [cancelModal,setCancelModal]=useState(null);
+
+  useEffect(()=>{
+    const uns=[
+      dbListen('sales',setSales),
+      dbListen('acct',setAccounts),
+      dbListen('carryover',setCarryover),
+      dbListen('register',setRegister),
+      listenConnected(setConnected),
+    ];
+    return()=>uns.forEach(u=>u());
+  },[]);
+
+  const effectiveInit=(d,fId)=>INIT_STOCK[d][fId]+(d===2?(carryover[fId]||0):0);
+  const salesArr=Array.isArray(sales)?sales:[];
+  const soldToday=salesArr.filter(s=>s.day===day&&!s.voided).reduce((a,s)=>({...a,[s.flavor]:(a[s.flavor]||0)+s.qty}),{});
+  const remaining=Object.fromEntries(FLAVORS.map(f=>[f.id,Math.max(0,effectiveInit(day,f.id)-(soldToday[f.id]||0))]));
+  const cartCount=Object.values(cart).reduce((a,q)=>a+q,0);
+  const cartTotal=cartCount*price;
+  const changeAmt=received&&parseInt(received)>=cartTotal?parseInt(received)-cartTotal:null;
+  const shortAmt=received&&parseInt(received)<cartTotal?cartTotal-parseInt(received):null;
+  const validSales=salesArr.filter(s=>!s.voided);
+  const todayRev=validSales.filter(s=>s.day===day).reduce((a,s)=>a+s.total,0);
+  const allRev=validSales.reduce((a,s)=>a+s.total,0);
+  const daySales=validSales.filter(s=>s.day===day);
+  const totalUnits=daySales.reduce((a,s)=>a+s.qty,0);
+  const avgPrice=totalUnits?Math.round(todayRev/totalUnits):0;
+  const cashRev=daySales.filter(s=>s.type==='cash').reduce((a,s)=>a+s.total,0);
+  const creditRevDay=daySales.filter(s=>s.type==='credit').reduce((a,s)=>a+s.total,0);
+  const creditList=Object.values(accounts||{});
+  const totOwed=creditList.reduce((a,x)=>a+x.owed,0);
+  const totPaid=creditList.reduce((a,x)=>a+x.paid,0);
+  const regTotal=Object.entries(register||{}).reduce((a,[d,c])=>a+parseInt(d)*c,0);
+  const batchMap={};
+  [...daySales].reverse().forEach(s=>{if(!batchMap[s.batchId])batchMap[s.batchId]=[];batchMap[s.batchId].push(s);});
+  const batches=Object.values(batchMap);
+  const voidedMap={};
+  salesArr.filter(s=>s.day===day&&s.voided).forEach(s=>{if(!voidedMap[s.batchId])voidedMap[s.batchId]=[];voidedMap[s.batchId].push(s);});
+  const voidedBatches=Object.values(voidedMap);
+
+  const showToast=(msg,type='ok')=>{setToast({msg,type});setTimeout(()=>setToast(null),2500);};
+  const setCartItem=(fId,qty)=>setCart(prev=>({...prev,[fId]:Math.max(0,Math.min(remaining[fId],qty))}));
+
+  const handleSell=async()=>{
+    if(cartCount===0)return showToast('商品を選択してください','err');
+    for(const f of FLAVORS){if(cart[f.id]>remaining[f.id])return showToast(`${f.name}の在庫不足`,'err');}
+    if(payType==='credit'&&!creditName.trim())return showToast('売掛先の名前を入力してください','err');
+    const batchId=`b${Date.now()}`;const name=creditName.trim();const ts=new Date().toISOString();
+    const newSales=[...salesArr];const batchItems=[];
+    for(const f of FLAVORS){
+      if(cart[f.id]>0){
+        const sale={id:`${batchId}-${f.id}`,batchId,day,flavor:f.id,qty:cart[f.id],price,total:price*cart[f.id],type:payType,creditName:payType==='credit'?name:null,received:payType==='cash'&&received?parseInt(received):null,ts,device:DEVICE_ID,voided:false};
+        newSales.push(sale);batchItems.push(sale);
+      }
+    }
+    const batchTotal=batchItems.reduce((a,s)=>a+s.total,0);
+    let na={...(accounts||{})};
+    if(payType==='credit'){
+      if(!na[name])na[name]={name,owed:0,paid:0,txns:[]};
+      const label=batchItems.map(s=>`${FLAVORS.find(f=>f.id===s.flavor).name}x${s.qty}`).join('+')+ ` @¥${price}`;
+      na[name]={...na[name],owed:na[name].owed+batchTotal,txns:[...na[name].txns,{id:batchId,amt:batchTotal,label,ts}]};
+    }
+    setSales(newSales);setAccounts(na);
+    await Promise.all([dbSet('sales',newSales),dbSet('acct',na)]);
+    const chg=received&&parseInt(received)>batchTotal?parseInt(received)-batchTotal:null;
+    showToast(chg!==null?`お釣り ¥${chg.toLocaleString()}`:`¥${batchTotal.toLocaleString()} を記録！`);
+    setCart({...EMPTY_CART});setCreditName('');setReceived('');
+  };
+
+  const voidBatch=async(batchId)=>{
+    const batchSales=salesArr.filter(s=>s.batchId===batchId&&!s.voided);
+    const newSales=salesArr.map(s=>s.batchId===batchId?{...s,voided:true}:s);
+    let na={...(accounts||{})};
+    const cs=batchSales.find(s=>s.type==='credit');
+    if(cs&&na[cs.creditName]){
+      const bt=batchSales.reduce((a,s)=>a+s.total,0);
+      na[cs.creditName]={...na[cs.creditName],owed:na[cs.creditName].owed-bt,txns:na[cs.creditName].txns.filter(t=>t.id!==batchId)};
+    }
+    setSales(newSales);setAccounts(na);
+    await Promise.all([dbSet('sales',newSales),dbSet('acct',na)]);
+    showToast('注文を取り消しました');setCancelModal(null);
+  };
+
+  const handlePay=async()=>{
+    const amt=parseInt(payAmt);if(!amt||amt<=0)return showToast('金額を入力してください','err');
+    const na={...(accounts||{}),[payModal]:{...accounts[payModal],paid:(accounts[payModal].paid||0)+amt}};
+    setAccounts(na);await dbSet('acct',na);
+    showToast(`${payModal}さんの支払いを記録しました`);setPayModal(null);setPayAmt('');
+  };
+
+  const doCarryover=async()=>{
+    const d1=salesArr.filter(s=>s.day===1&&!s.voided).reduce((a,s)=>({...a,[s.flavor]:(a[s.flavor]||0)+s.qty}),{});
+    const co=Object.fromEntries(FLAVORS.map(f=>[f.id,Math.max(0,INIT_STOCK[1][f.id]-(d1[f.id]||0))]));
+    setCarryover(co);await dbSet('carryover',co);
+    showToast(FLAVORS.map(f=>`${f.name}+${co[f.id]}`).join(' / ')+' 引継ぎ完了');
+  };
+
+  const updateRegister=async(denom,delta)=>{
+    const nr={...(register||{}),[denom]:Math.max(0,((register||{})[denom]||0)+delta)};
+    setRegister(nr);await dbSet('register',nr);
+  };
+
+  const TABS=[{id:'sale',icon:'🛒',label:'販売'},{id:'inventory',icon:'📦',label:'在庫'},{id:'credit',icon:'💳',label:'売掛'},{id:'register',icon:'💰',label:'レジ'},{id:'summary',icon:'📊',label:'集計'}];
+
+  return (
+    <div style={{minHeight:'100vh',background:C.bg,color:C.text,display:'flex',flexDirection:'column',maxWidth:480,margin:'0 auto',userSelect:'none'}}>
+
+      <header style={{padding:'14px 20px 12px',borderBottom:`1px solid ${C.border}`,position:'sticky',top:0,zIndex:10,background:`${C.bg}F2`,backdropFilter:'blur(16px)'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
+          <div>
+            <div style={{fontSize:9,color:C.dim,letterSpacing:'.22em'}}>五月祭 2026</div>
+            <div style={{fontSize:19,fontWeight:800,marginTop:1}}>🥞 ブリュレクレープ</div>
+          </div>
+          <div style={{display:'flex',gap:6}}>
+            {[1,2].map(d=>(
+              <button key={d} onClick={()=>setDay(d)} className="bp"
+                style={{background:day===d?C.gold:'rgba(255,255,255,.07)',color:day===d?'#0C0C0D':C.muted,border:'none',borderRadius:9,padding:'5px 14px',fontWeight:700,fontSize:12,cursor:'pointer',transition:'all .15s',boxShadow:day===d?`0 0 14px ${C.gold}55`:'none'}}>
+                Day {d}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:10}}>
+          <div style={{display:'flex',alignItems:'baseline',gap:6}}>
+            <span style={{fontSize:26,fontWeight:800,color:C.gold,letterSpacing:'-.5px'}}>¥{todayRev.toLocaleString()}</span>
+            <span style={{fontSize:11,color:C.dim}}>本日売上</span>
+          </div>
+          <div style={{textAlign:'right'}}>
+            <div style={{fontSize:9,color:C.dim}}>{DEVICE_ID}</div>
+            <div style={{display:'flex',alignItems:'center',gap:4,justifyContent:'flex-end',marginTop:2}}>
+              <div style={{width:6,height:6,borderRadius:'50%',background:connected?C.green:C.red,boxShadow:connected?`0 0 6px ${C.green}`:'none'}}/>
+              <span style={{fontSize:10,color:C.muted}}>{connected?'オンライン':'オフライン'}</span>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main style={{flex:1,padding:'18px 18px 96px',overflowY:'auto'}}>
+
+        {tab==='sale'&&(
+          <div style={{display:'flex',flexDirection:'column',gap:14,animation:'slideUp .2s ease'}}>
+            <div style={{display:'flex',flexDirection:'column',gap:8}}>
+              {FLAVORS.map(f=>{
+                const rem=remaining[f.id];const inCart=cart[f.id];const isOut=rem===0;
+                return(
+                  <div key={f.id} style={{background:inCart>0?f.bg:'rgba(255,255,255,.03)',border:`1.5px solid ${inCart>0?f.color:C.border}`,borderRadius:16,padding:'12px 14px',transition:'all .15s',boxShadow:inCart>0?`0 0 16px ${f.glow}`:'none',display:'flex',alignItems:'center',gap:10}}>
+                    <span style={{fontSize:26,flexShrink:0}}>{f.icon}</span>
+                    <div style={{flex:1}}>
+                      <div style={{fontWeight:700,fontSize:14}}>{f.name}</div>
+                      <div style={{fontSize:11,color:isOut?C.red:C.dim}}>残り {rem}個</div>
+                    </div>
+                    {inCart>0&&<div style={{fontSize:13,fontWeight:700,color:f.color,flexShrink:0}}>¥{(inCart*price).toLocaleString()}</div>}
+                    <div style={{display:'flex',alignItems:'center',gap:6,flexShrink:0}}>
+                      <button onClick={()=>setCartItem(f.id,inCart-1)} className="bp" style={{background:inCart>0?'rgba(255,255,255,.12)':C.surfaceHi,border:'none',color:inCart>0?C.text:C.dim,borderRadius:8,width:34,height:34,fontSize:20,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}>−</button>
+                      <span style={{fontSize:20,fontWeight:800,minWidth:26,textAlign:'center',color:inCart>0?f.color:C.muted}}>{inCart}</span>
+                      <button onClick={()=>!isOut&&setCartItem(f.id,inCart+1)} className={isOut?'':'bp'} style={{background:isOut?C.surfaceHi:'rgba(255,255,255,.12)',border:'none',color:isOut?C.dim:C.text,borderRadius:8,width:34,height:34,fontSize:20,cursor:isOut?'not-allowed':'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}>＋</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            {cartCount>0&&<div style={{background:'rgba(212,168,68,.1)',borderRadius:13,padding:'11px 16px',border:'1px solid rgba(212,168,68,.25)',display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontSize:13,color:C.muted}}>{cartCount}個 合計</span><span style={{fontSize:22,fontWeight:800,color:C.gold}}>¥{cartTotal.toLocaleString()}</span></div>}
+            <div style={{background:C.surface,borderRadius:16,padding:'14px 16px',border:`1px solid ${C.border}`}}>
+              <div style={{fontSize:9,color:C.dim,letterSpacing:'.15em',marginBottom:9}}>PRICE</div>
+              <div style={{display:'flex',gap:8}}>
+                {PRICES.map(p=>(
+                  <button key={p} onClick={()=>setPrice(p)} className="bp"
+                    style={{flex:1,background:price===p?C.gold:'rgba(255,255,255,.06)',color:price===p?'#0C0C0D':C.muted,border:'none',borderRadius:11,padding:'11px 0',fontWeight:700,fontSize:14,cursor:'pointer',transition:'all .14s',boxShadow:price===p?`0 0 14px ${C.gold}55`:'none'}}>
+                    ¥{p}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div style={{background:C.surface,borderRadius:16,padding:'14px 16px',border:`1px solid ${C.border}`}}>
+              <div style={{fontSize:9,color:C.dim,letterSpacing:'.15em',marginBottom:9}}>PAYMENT</div>
+              <div style={{display:'flex',gap:8}}>
+                {[{id:'cash',label:'💴 現金',col:C.green},{id:'credit',label:'💳 売掛',col:C.gold}].map(pt=>(
+                  <button key={pt.id} onClick={()=>setPayType(pt.id)} className="bp"
+                    style={{flex:1,background:payType===pt.id?`${pt.col}18`:'rgba(255,255,255,.04)',border:`1px solid ${payType===pt.id?pt.col:'transparent'}`,color:payType===pt.id?pt.col:C.muted,borderRadius:10,padding:'10px',fontWeight:700,fontSize:13,cursor:'pointer',transition:'all .12s'}}>
+                    {pt.label}
+                  </button>
+                ))}
+              </div>
+              {payType==='cash'&&cartCount>0&&(
+                <div style={{marginTop:12}}>
+                  <div style={{fontSize:9,color:C.dim,letterSpacing:'.1em',marginBottom:7}}>受取金額（任意）</div>
+                  <input type="number" inputMode="numeric" placeholder={`¥${cartTotal} 以上`} value={received} onChange={e=>setReceived(e.target.value)}
+                    style={{width:'100%',background:'rgba(255,255,255,.06)',border:`1px solid ${C.borderMd}`,borderRadius:11,padding:'10px 14px',color:C.text,fontSize:16}}/>
+                  {received&&<div style={{marginTop:8,padding:'10px 14px',borderRadius:11,background:changeAmt!==null?'rgba(92,184,112,.12)':'rgba(224,88,88,.12)',border:`1px solid ${changeAmt!==null?'rgba(92,184,112,.3)':'rgba(224,88,88,.3)'}`,display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontSize:12,color:C.muted}}>{changeAmt!==null?'お釣り':'不足額'}</span><span style={{fontSize:22,fontWeight:800,color:changeAmt!==null?C.green:C.red}}>¥{(changeAmt!==null?changeAmt:shortAmt).toLocaleString()}</span></div>}
+                </div>
+              )}
+              {payType==='credit'&&(
+                <div style={{marginTop:12}}>
+                  <div style={{fontSize:9,color:C.gold,letterSpacing:'.1em',marginBottom:7}}>売掛先の名前</div>
+                  <input type="text" placeholder="例：田中さん" value={creditName} onChange={e=>setCreditName(e.target.value)}
+                    style={{width:'100%',background:'rgba(255,255,255,.06)',border:'1px solid rgba(212,168,68,.3)',borderRadius:11,padding:'10px 14px',color:C.text,fontSize:15}}/>
+                </div>
+              )}
+            </div>
+            <button onClick={handleSell} className={cartCount>0?'bp':''}
+              style={{background:cartCount>0?`linear-gradient(135deg,${C.gold},#B88A30)`:C.surfaceHi,color:cartCount>0?'#0C0C0D':C.dim,border:'none',borderRadius:16,padding:'18px',fontWeight:800,fontSize:17,cursor:cartCount>0?'pointer':'not-allowed',transition:'all .14s',boxShadow:cartCount>0?`0 4px 28px rgba(212,168,68,.45)`:'none'}}>
+              {cartCount>0?`✓ 売る！　¥${cartTotal.toLocaleString()}`:'商品を選択してください'}
+            </button>
+          </div>
+        )}
+
+        {tab==='inventory'&&(
+          <div style={{display:'flex',flexDirection:'column',gap:14,animation:'slideUp .2s ease'}}>
+            <div style={{fontSize:10,color:C.dim,textAlign:'center',letterSpacing:'.15em'}}>DAY {day} — INVENTORY</div>
+            {FLAVORS.map(f=>{
+              const init=effectiveInit(day,f.id);const rem=remaining[f.id];const pct=init>0?(rem/init)*100:0;
+              const co=day===2?(carryover[f.id]||0):0;
+              const sc=rem===0?C.red:pct<20?C.yellow:pct<50?C.blue:C.green;
+              const sl=rem===0?'売り切れ':pct<20?'残り僅か':pct<50?'残りあり':'在庫十分';
+              return(
+                <div key={f.id} style={{background:C.surface,borderRadius:20,padding:20,border:`1px solid ${C.border}`}}>
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14}}>
+                    <div style={{display:'flex',alignItems:'center',gap:12}}>
+                      <div style={{width:52,height:52,borderRadius:14,background:f.bg,display:'flex',alignItems:'center',justifyContent:'center',fontSize:26,flexShrink:0}}>{f.icon}</div>
+                      <div>
+                        <div style={{fontWeight:700,fontSize:16}}>{f.name}</div>
+                        <div style={{fontSize:11,color:C.muted,marginTop:2}}>{soldToday[f.id]||0} 個 販売済み</div>
+                        {co>0&&<div style={{fontSize:10,color:C.teal,marginTop:1}}>Day1引継 +{co}個含む</div>}
+                      </div>
+                    </div>
+                    <div style={{textAlign:'right'}}><span style={{fontSize:38,fontWeight:800,color:f.color,lineHeight:1}}>{rem}</span><span style={{fontSize:13,color:C.dim}}>&nbsp;/{init}</span></div>
+                  </div>
+                  <div style={{height:8,background:'rgba(255,255,255,.07)',borderRadius:4,overflow:'hidden'}}><div style={{height:'100%',width:`${pct}%`,background:`linear-gradient(90deg,${f.color},${f.color}90)`,borderRadius:4,transition:'width .5s ease'}}/></div>
+                  <div style={{display:'flex',justifyContent:'space-between',marginTop:7}}><span style={{fontSize:11,fontWeight:700,color:sc}}>{sl}</span><span style={{fontSize:11,color:C.dim}}>{Math.round(pct)}% 残存</span></div>
+                </div>
+              );
+            })}
+            <div style={{background:C.surface,borderRadius:18,padding:18,border:`1px solid ${C.border}`}}>
+              <div style={{fontSize:11,fontWeight:700,color:C.muted,marginBottom:8}}>Day1 → Day2 在庫引継ぎ</div>
+              {Object.values(carryover).some(v=>v>0)&&<div style={{fontSize:11,color:C.teal,marginBottom:10,padding:'7px 12px',background:'rgba(72,196,168,.08)',borderRadius:8}}>現在: {FLAVORS.map(f=>`${f.icon}${f.name}+${carryover[f.id]}`).join(' ')}</div>}
+              <button onClick={doCarryover} className="bp" style={{width:'100%',background:'rgba(72,196,168,.12)',border:'1px solid rgba(72,196,168,.3)',color:C.teal,borderRadius:11,padding:'12px',fontWeight:700,fontSize:13,cursor:'pointer'}}>🔄 Day1の余り在庫をDay2に引き継ぐ</button>
+            </div>
+          </div>
+        )}
+
+        {tab==='credit'&&(
+          <div style={{display:'flex',flexDirection:'column',gap:14,animation:'slideUp .2s ease'}}>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:8}}>
+              {[{l:'売掛合計',v:`¥${totOwed.toLocaleString()}`,c:C.text},{l:'受領済み',v:`¥${totPaid.toLocaleString()}`,c:C.green},{l:'未収残高',v:`¥${(totOwed-totPaid).toLocaleString()}`,c:(totOwed-totPaid)>0?C.yellow:C.green}].map(k=>(
+                <div key={k.l} style={{background:C.surface,borderRadius:14,padding:'12px 10px',border:`1px solid ${C.border}`,textAlign:'center'}}>
+                  <div style={{fontSize:15,fontWeight:800,color:k.c}}>{k.v}</div>
+                  <div style={{fontSize:9,color:C.dim,marginTop:3}}>{k.l}</div>
+                </div>
+              ))}
+            </div>
+            {creditList.length===0?(
+              <div style={{textAlign:'center',padding:'52px 0',color:C.dim,fontSize:14}}><div style={{fontSize:36,marginBottom:12}}>💳</div>売掛の記録はありません</div>
+            ):creditList.map(acct=>{
+              const bal=acct.owed-acct.paid;const done=bal<=0;
+              return(
+                <div key={acct.name} style={{background:C.surface,borderRadius:18,padding:18,border:`1px solid ${done?'rgba(92,184,112,.22)':'rgba(232,168,48,.22)'}`,position:'relative',overflow:'hidden'}}>
+                  {done&&<div style={{position:'absolute',top:0,right:0,background:C.green,color:'#0C0C0D',fontSize:9,fontWeight:800,padding:'4px 10px',borderRadius:'0 18px 0 12px'}}>完済</div>}
+                  <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+                    <div><div style={{fontWeight:700,fontSize:16}}>{acct.name}</div><div style={{fontSize:11,color:C.muted,marginTop:2}}>{(acct.txns||[]).length} 件の取引</div></div>
+                    <div style={{textAlign:'right'}}><div style={{fontSize:20,fontWeight:800,color:done?C.green:C.yellow}}>{done?'✓':`¥${bal.toLocaleString()}`}</div><div style={{fontSize:10,color:C.dim}}>¥{(acct.paid||0).toLocaleString()} 支払済 / 計¥{acct.owed.toLocaleString()}</div></div>
+                  </div>
+                  <div style={{borderTop:`1px solid ${C.border}`,paddingTop:10,marginBottom:done?0:12}}>
+                    {(acct.txns||[]).map(t=><div key={t.id} style={{display:'flex',justifyContent:'space-between',padding:'4px 0',fontSize:12,color:C.muted}}><span>{t.label}</span><span style={{color:C.text,fontWeight:500}}>¥{t.amt.toLocaleString()}</span></div>)}
+                  </div>
+                  {!done&&<button onClick={()=>{setPayModal(acct.name);setPayAmt(String(bal));}} className="bp" style={{width:'100%',background:'rgba(232,168,48,.1)',border:'1px solid rgba(232,168,48,.28)',color:C.yellow,borderRadius:11,padding:'11px',fontWeight:700,fontSize:13,cursor:'pointer'}}>支払いを記録する</button>}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {tab==='register'&&(
+          <div style={{display:'flex',flexDirection:'column',gap:14,animation:'slideUp .2s ease'}}>
+            <div style={{background:C.surface,borderRadius:18,padding:20,border:`1px solid ${C.border}`}}>
+              <div style={{fontSize:9,color:C.dim,letterSpacing:'.15em',marginBottom:4}}>レジ残高</div>
+              <div style={{fontSize:36,fontWeight:800,color:C.gold}}>¥{regTotal.toLocaleString()}</div>
+              <div style={{fontSize:11,color:C.dim,marginTop:4}}>本日売上 ¥{todayRev.toLocaleString()} ／ 累計 ¥{allRev.toLocaleString()}</div>
+            </div>
+            <div style={{background:C.surface,borderRadius:18,padding:18,border:`1px solid ${C.border}`}}>
+              <div style={{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.15em',marginBottom:14}}>お札・硬貨の枚数</div>
+              {DENOMS.map(d=>(
+                <div key={d.v} style={{display:'flex',alignItems:'center',padding:'9px 0',borderBottom:`1px solid ${C.border}`}}>
+                  <span style={{fontSize:16,marginRight:8,flexShrink:0}}>{d.icon}</span>
+                  <div style={{flex:1}}><span style={{fontWeight:700,fontSize:14}}>{d.l}</span>{((register||{})[d.v]||0)>0&&<span style={{fontSize:11,color:C.muted,marginLeft:8}}>= ¥{(((register||{})[d.v]||0)*d.v).toLocaleString()}</span>}</div>
+                  <div style={{display:'flex',alignItems:'center',gap:6}}>
+                    <button onClick={()=>updateRegister(d.v,-1)} className="bp" style={{background:C.surfaceHi,border:'none',color:C.text,borderRadius:7,width:30,height:30,fontSize:16,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}>−</button>
+                    <span style={{fontSize:18,fontWeight:800,minWidth:30,textAlign:'center'}}>{(register||{})[d.v]||0}</span>
+                    <button onClick={()=>updateRegister(d.v,1)} className="bp" style={{background:C.surfaceHi,border:'none',color:C.text,borderRadius:7,width:30,height:30,fontSize:16,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}>＋</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div style={{background:C.surface,borderRadius:18,padding:18,border:`1px solid ${C.border}`}}>
+              <div style={{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.15em',marginBottom:14}}>お釣り計算機</div>
+              <ChangeCalc/>
+            </div>
+          </div>
+        )}
+
+        {tab==='summary'&&(
+          <div style={{display:'flex',flexDirection:'column',gap:14,animation:'slideUp .2s ease'}}>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
+              {[{l:'本日売上',v:`¥${todayRev.toLocaleString()}`,c:C.gold},{l:'販売数',v:`${totalUnits}個`,c:C.blue},{l:'平均単価',v:`¥${avgPrice}`,c:C.purple},{l:'累計売上',v:`¥${allRev.toLocaleString()}`,c:C.teal}].map(k=>(
+                <div key={k.l} style={{background:C.surface,borderRadius:14,padding:16,border:`1px solid ${C.border}`,textAlign:'center'}}>
+                  <div style={{fontSize:22,fontWeight:800,color:k.c}}>{k.v}</div>
+                  <div style={{fontSize:10,color:C.dim,marginTop:3}}>{k.l}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{background:C.surface,borderRadius:18,padding:18,border:`1px solid ${C.border}`}}>
+              <div style={{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.15em',marginBottom:14}}>FLAVOR BREAKDOWN</div>
+              {FLAVORS.map(f=>{const fs=daySales.filter(s=>s.flavor===f.id);const fu=fs.reduce((a,s)=>a+s.qty,0);const fr=fs.reduce((a,s)=>a+s.total,0);return(<div key={f.id} style={{marginBottom:12}}><div style={{display:'flex',justifyContent:'space-between',marginBottom:5,fontSize:13}}><span style={{fontWeight:600}}>{f.icon} {f.name}</span><span><span style={{fontWeight:700}}>¥{fr.toLocaleString()}</span><span style={{color:C.muted,fontSize:11,marginLeft:6}}>{fu}個</span></span></div><div style={{height:5,background:'rgba(255,255,255,.07)',borderRadius:3,overflow:'hidden'}}><div style={{height:'100%',width:todayRev?`${(fr/todayRev)*100}%`:'0%',background:`linear-gradient(90deg,${f.color},${f.color}80)`,borderRadius:3,transition:'width .5s ease'}}/></div></div>);})}
+            </div>
+            <div style={{background:C.surface,borderRadius:18,padding:18,border:`1px solid ${C.border}`,display:'flex',gap:14}}>
+              <div style={{flex:1,textAlign:'center'}}><div style={{fontSize:20,fontWeight:800,color:C.green}}>¥{cashRev.toLocaleString()}</div><div style={{fontSize:11,color:C.muted,marginTop:3}}>💴 現金</div></div>
+              <div style={{width:1,background:C.border}}/>
+              <div style={{flex:1,textAlign:'center'}}><div style={{fontSize:20,fontWeight:800,color:C.gold}}>¥{creditRevDay.toLocaleString()}</div><div style={{fontSize:11,color:C.muted,marginTop:3}}>💳 売掛</div></div>
+            </div>
+            <div style={{background:C.surface,borderRadius:18,padding:18,border:`1px solid ${C.border}`}}>
+              <div style={{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.15em',marginBottom:14}}>取引履歴 / 注文取り消し</div>
+              {batches.length===0?<div style={{textAlign:'center',color:C.dim,fontSize:13,padding:'16px 0'}}>まだ取引がありません</div>:batches.map(batch=>{
+                const ts=new Date(batch[0].ts);const bt=batch.reduce((a,s)=>a+s.total,0);const bId=batch[0].batchId;
+                return(<div key={bId} style={{padding:'10px 0',borderBottom:`1px solid ${C.border}`}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',gap:8}}><div style={{flex:1}}>{batch.map(s=>{const f=FLAVORS.find(fl=>fl.id===s.flavor);return(<div key={s.id} style={{fontSize:12,marginBottom:2}}><span style={{color:f.color,fontWeight:600}}>{f.icon}{f.name}</span><span style={{color:C.dim,marginLeft:4}}>×{s.qty} @¥{s.price}</span></div>);})}<div style={{fontSize:10,color:C.dim,marginTop:4,display:'flex',gap:8}}><span>{ts.getHours()}:{String(ts.getMinutes()).padStart(2,'0')}</span>{batch[0].type==='credit'&&<span style={{color:C.gold}}>💳 {batch[0].creditName}</span>}</div></div><div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:6}}><span style={{fontWeight:700,fontSize:14}}>¥{bt.toLocaleString()}</span><button onClick={()=>setCancelModal(bId)} className="bp" style={{background:'rgba(224,88,88,.1)',border:'1px solid rgba(224,88,88,.25)',color:C.red,borderRadius:7,padding:'4px 10px',fontSize:11,cursor:'pointer',fontWeight:600}}>取消</button></div></div></div>);
+              })}
+            </div>
+          </div>
+        )}
+      </main>
+
+      <nav style={{position:'fixed',bottom:0,left:'50%',transform:'translateX(-50%)',width:'100%',maxWidth:480,background:`${C.bg}F5`,backdropFilter:'blur(16px)',borderTop:`1px solid ${C.border}`,display:'flex',padding:'8px 0 14px',zIndex:10}}>
+        {TABS.map(t=>(
+          <button key={t.id} onClick={()=>setTab(t.id)} className="bp"
+            style={{flex:1,background:'none',border:'none',color:tab===t.id?C.gold:C.dim,cursor:'pointer',display:'flex',flexDirection:'column',alignItems:'center',gap:3,padding:'6px 0',transition:'color .15s'}}>
+            <span style={{fontSize:tab===t.id?21:18}}>{t.icon}</span>
+            <span style={{fontSize:9,fontWeight:tab===t.id?700:400}}>{t.label}</span>
+            {tab===t.id&&<div style={{width:4,height:4,borderRadius:'50%',background:C.gold,marginTop:1,boxShadow:`0 0 6px ${C.gold}`}}/>}
+          </button>
+        ))}
+      </nav>
+
+      {toast&&<div style={{position:'fixed',bottom:84,left:'50%',transform:'translateX(-50%)',background:toast.type==='err'?C.red:'rgba(16,16,18,.97)',border:toast.type==='err'?'none':`1px solid rgba(212,168,68,.4)`,color:toast.type==='err'?'#fff':C.gold,padding:'11px 24px',borderRadius:100,fontWeight:700,fontSize:13,whiteSpace:'nowrap',zIndex:200,pointerEvents:'none',boxShadow:'0 8px 32px rgba(0,0,0,.7)',animation:'slideUp .18s ease'}}>{toast.type==='err'?'⚠ ':'✓ '}{toast.msg}</div>}
+
+      {payModal&&(
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.88)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:100,padding:24,animation:'fadeIn .15s ease'}} onClick={e=>{if(e.target===e.currentTarget){setPayModal(null);setPayAmt('');}}}>
+          <div style={{background:'#1A1A1D',borderRadius:24,padding:26,width:'100%',maxWidth:360,border:`1px solid ${C.borderMd}`,boxShadow:'0 24px 80px rgba(0,0,0,.8)',animation:'slideUp .2s ease'}}>
+            <div style={{fontSize:18,fontWeight:800,marginBottom:6}}>💳 {payModal}さんの支払い</div>
+            <div style={{fontSize:12,color:C.muted,marginBottom:20}}>未収残高：<span style={{color:C.yellow,fontWeight:700}}>¥{(((accounts||{})[payModal]?.owed||0)-((accounts||{})[payModal]?.paid||0)).toLocaleString()}</span></div>
+            <input type="number" inputMode="numeric" placeholder="支払い金額を入力" value={payAmt} onChange={e=>setPayAmt(e.target.value)} style={{width:'100%',background:'rgba(255,255,255,.07)',border:`1px solid ${C.borderMd}`,borderRadius:13,padding:'13px 16px',color:C.text,fontSize:20,marginBottom:10}}/>
+            <button onClick={()=>setPayAmt(String(((accounts||{})[payModal]?.owed||0)-((accounts||{})[payModal]?.paid||0)))} className="bp" style={{background:'rgba(255,255,255,.06)',border:'none',color:C.muted,borderRadius:9,padding:'7px 14px',fontSize:12,cursor:'pointer',marginBottom:18}}>全額入力</button>
+            <div style={{display:'flex',gap:10}}>
+              <button onClick={()=>{setPayModal(null);setPayAmt('');}} className="bp" style={{flex:1,background:'rgba(255,255,255,.07)',border:'none',color:C.muted,borderRadius:13,padding:'14px',cursor:'pointer',fontSize:14}}>キャンセル</button>
+              <button onClick={handlePay} className="bp" style={{flex:2,background:`linear-gradient(135deg,${C.gold},#B88A30)`,border:'none',color:'#0C0C0D',borderRadius:13,padding:'14px',fontWeight:800,cursor:'pointer',fontSize:15,boxShadow:`0 4px 20px rgba(212,168,68,.4)`}}>記録する</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {cancelModal&&(
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.88)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:100,padding:24,animation:'fadeIn .15s ease'}} onClick={e=>{if(e.target===e.currentTarget)setCancelModal(null);}}>
+          <div style={{background:'#1A1A1D',borderRadius:24,padding:26,width:'100%',maxWidth:360,border:'1px solid rgba(224,88,88,.3)',boxShadow:'0 24px 80px rgba(0,0,0,.8)',animation:'slideUp .2s ease'}}>
+            <div style={{fontSize:18,fontWeight:800,marginBottom:8}}>⚠ 注文を取り消しますか？</div>
+            {(()=>{const batch=salesArr.filter(s=>s.batchId===cancelModal&&!s.voided);const total=batch.reduce((a,s)=>a+s.total,0);return(<div style={{fontSize:13,color:C.muted,marginBottom:20,padding:'10px 14px',background:'rgba(255,255,255,.04)',borderRadius:10}}>{batch.map(s=>{const f=FLAVORS.find(fl=>fl.id===s.flavor);return<div key={s.id} style={{marginBottom:2}}>{f.icon} {f.name} ×{s.qty} — ¥{s.total.toLocaleString()}</div>;})}<div style={{marginTop:8,fontWeight:700,color:C.red,fontSize:15}}>合計 ¥{total.toLocaleString()}</div></div>);})()}
+            <div style={{display:'flex',gap:10}}>
+              <button onClick={()=>setCancelModal(null)} className="bp" style={{flex:1,background:'rgba(255,255,255,.07)',border:'none',color:C.muted,borderRadius:13,padding:'14px',cursor:'pointer',fontSize:14}}>戻る</button>
+              <button onClick={()=>voidBatch(cancelModal)} className="bp" style={{flex:2,background:'rgba(224,88,88,.15)',border:'1px solid rgba(224,88,88,.4)',color:C.red,borderRadius:13,padding:'14px',fontWeight:800,cursor:'pointer',fontSize:15}}>取り消す</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App/>);
+</script>
+</body>
+</html>
