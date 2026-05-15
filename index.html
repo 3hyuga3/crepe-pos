@@ -131,7 +131,7 @@ function App() {
   const [price,setPrice]=useState(700);
   const [payType,setPayType]=useState('cash');
   const [creditName,setCreditName]=useState('');
-  const [received,setReceived]=useState('');
+  const [receivedDenoms,setReceivedDenoms]=useState(Object.fromEntries(DENOMS.map(d=>[d.v,0])));
   const [toast,setToast]=useState(null);
   const [payModal,setPayModal]=useState(null);
   const [payAmt,setPayAmt]=useState('');
@@ -167,8 +167,9 @@ function App() {
  
   const cartCount=Object.values(cart).reduce((a,q)=>a+q,0);
   const cartTotal=cartCount*price;
-  const changeAmt=received&&parseInt(received)>=cartTotal?parseInt(received)-cartTotal:null;
-  const shortAmt=received&&parseInt(received)<cartTotal?cartTotal-parseInt(received):null;
+  const receivedTotal=Object.entries(receivedDenoms).reduce((a,[d,n])=>a+parseInt(d)*n,0);
+  const changeAmt=receivedTotal>0&&receivedTotal>=cartTotal?receivedTotal-cartTotal:null;
+  const shortAmt=receivedTotal>0&&receivedTotal<cartTotal?cartTotal-receivedTotal:null;
   const validSales=salesArr.filter(s=>!s.voided);
   const todayRev=validSales.filter(s=>s.day===day).reduce((a,s)=>a+s.total,0);
   const allRev=validSales.reduce((a,s)=>a+s.total,0);
@@ -208,7 +209,7 @@ function App() {
     const newSales=[...salesArr];const batchItems=[];
     for(const f of FLAVORS){
       if(cart[f.id]>0){
-        const sale={id:`${batchId}-${f.id}`,batchId,day,flavor:f.id,qty:cart[f.id],price,total:price*cart[f.id],type:payType,creditName:payType==='credit'?name:null,received:payType==='cash'&&received?parseInt(received):null,ts,device:DEVICE_ID,voided:false};
+        const sale={id:`${batchId}-${f.id}`,batchId,day,flavor:f.id,qty:cart[f.id],price,total:price*cart[f.id],type:payType,creditName:payType==='credit'?name:null,received:payType==='cash'&&receivedTotal>0?receivedTotal:null,receivedDenoms:payType==='cash'&&receivedTotal>0?{...receivedDenoms}:null,ts,device:DEVICE_ID,voided:false};
         newSales.push(sale);batchItems.push(sale);
       }
     }
@@ -221,9 +222,9 @@ function App() {
     }
     // 現金でレジを自動更新（受取金額を加算→お釣りを減算）
     let nr={...(register||{})};
-    const chg=received&&parseInt(received)>batchTotal?parseInt(received)-batchTotal:null;
-    if(payType==='cash'&&received&&parseInt(received)>=batchTotal){
-      const addMap=denomBreakdown(parseInt(received));
+    const chg=receivedTotal>0&&receivedTotal>batchTotal?receivedTotal-batchTotal:null;
+    if(payType==='cash'&&receivedTotal>=batchTotal){
+      const addMap={...receivedDenoms};
       for(const[d,n] of Object.entries(addMap)) nr[d]=(nr[d]||0)+n;
       if(chg>0){
         const subMap=denomBreakdown(chg);
@@ -233,7 +234,7 @@ function App() {
     setSales(newSales);setAccounts(na);setRegister(nr);
     await Promise.all([dbSet('sales',newSales),dbSet('acct',na),dbSet('register',nr)]);
     showToast(chg!==null?`お釣り ¥${chg.toLocaleString()}`:`¥${batchTotal.toLocaleString()} を記録！`);
-    setCart({...EMPTY_CART});setCreditName('');setReceived('');
+    setCart({...EMPTY_CART});setCreditName('');setReceivedDenoms(Object.fromEntries(DENOMS.map(d=>[d.v,0])));
   };
  
   // 廃棄処理
@@ -260,8 +261,19 @@ function App() {
       const bt=batchSales.reduce((a,s)=>a+s.total,0);
       na[cs.creditName]={...na[cs.creditName],owed:na[cs.creditName].owed-bt,txns:na[cs.creditName].txns.filter(t=>t.id!==batchId)};
     }
-    setSales(newSales);setAccounts(na);
-    await Promise.all([dbSet('sales',newSales),dbSet('acct',na)]);
+    // レジを取り消し前の状態に戻す（受取を減算、お釣りを加算）
+    let nr={...(register||{})};
+    const cashSale=batchSales.find(s=>s.type==='cash'&&s.receivedDenoms);
+    if(cashSale&&cashSale.receivedDenoms){
+      const batchTotal=batchSales.reduce((a,s)=>a+s.total,0);
+      // 受取額を減算
+      for(const[d,n] of Object.entries(cashSale.receivedDenoms)) nr[d]=Math.max(0,(nr[d]||0)-n);
+      // お釣り分を加算（返ってきたのでレジに戻る）
+      const chgAmt=cashSale.received-batchTotal;
+      if(chgAmt>0){const sub=denomBreakdown(chgAmt);for(const[d,n] of Object.entries(sub)) nr[d]=(nr[d]||0)+n;}
+    }
+    setSales(newSales);setAccounts(na);setRegister(nr);
+    await Promise.all([dbSet('sales',newSales),dbSet('acct',na),dbSet('register',nr)]);
     showToast('注文を取り消しました');setCancelModal(null);
   };
  
@@ -370,10 +382,25 @@ function App() {
               </div>
               {payType==='cash'&&cartCount>0&&(
                 <div style={{marginTop:12}}>
-                  <div style={{fontSize:9,color:C.dim,letterSpacing:'.1em',marginBottom:7}}>受取金額（任意）</div>
-                  <input type="number" inputMode="numeric" placeholder={`¥${cartTotal} 以上`} value={received} onChange={e=>setReceived(e.target.value)}
-                    style={{width:'100%',background:'rgba(255,255,255,.06)',border:`1px solid ${C.borderMd}`,borderRadius:11,padding:'10px 14px',color:C.text,fontSize:16}}/>
-                  {received&&<div style={{marginTop:8,padding:'10px 14px',borderRadius:11,background:changeAmt!==null?'rgba(92,184,112,.12)':'rgba(224,88,88,.12)',border:`1px solid ${changeAmt!==null?'rgba(92,184,112,.3)':'rgba(224,88,88,.3)'}`,display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontSize:12,color:C.muted}}>{changeAmt!==null?'お釣り':'不足額'}</span><span style={{fontSize:22,fontWeight:800,color:changeAmt!==null?C.green:C.red}}>¥{(changeAmt!==null?changeAmt:shortAmt).toLocaleString()}</span></div>}
+                  <div style={{fontSize:9,color:C.dim,letterSpacing:'.1em',marginBottom:8}}>受取金額（額面別）</div>
+                  {DENOMS.map(d=>(
+                    <div key={d.v} style={{display:'flex',alignItems:'center',padding:'5px 0',borderBottom:`1px solid ${C.border}`}}>
+                      <span style={{fontSize:13,marginRight:6,flexShrink:0}}>{d.icon}</span>
+                      <span style={{flex:1,fontWeight:700,fontSize:13}}>{d.l}</span>
+                      <div style={{display:'flex',alignItems:'center',gap:5}}>
+                        <button onClick={()=>setReceivedDenoms(prev=>({...prev,[d.v]:Math.max(0,(prev[d.v]||0)-1)}))} className="bp"
+                          style={{background:C.surfaceHi,border:'none',color:C.text,borderRadius:6,width:26,height:26,fontSize:14,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}>−</button>
+                        <span style={{fontSize:15,fontWeight:800,minWidth:22,textAlign:'center',color:(receivedDenoms[d.v]||0)>0?C.green:C.dim}}>{receivedDenoms[d.v]||0}</span>
+                        <button onClick={()=>setReceivedDenoms(prev=>({...prev,[d.v]:(prev[d.v]||0)+1}))} className="bp"
+                          style={{background:C.surfaceHi,border:'none',color:C.text,borderRadius:6,width:26,height:26,fontSize:14,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}>＋</button>
+                      </div>
+                    </div>
+                  ))}
+                  <div style={{marginTop:8,display:'flex',justifyContent:'space-between',alignItems:'center',padding:'6px 2px'}}>
+                    <span style={{fontSize:12,color:C.muted}}>受取合計</span>
+                    <span style={{fontWeight:800,fontSize:16,color:receivedTotal>=cartTotal?C.green:C.dim}}>¥{receivedTotal.toLocaleString()}</span>
+                  </div>
+                  {receivedTotal>0&&<div style={{padding:'10px 14px',borderRadius:11,background:changeAmt!==null?'rgba(92,184,112,.12)':'rgba(224,88,88,.12)',border:`1px solid ${changeAmt!==null?'rgba(92,184,112,.3)':'rgba(224,88,88,.3)'}`,display:'flex',justifyContent:'space-between',alignItems:'center'}}><span style={{fontSize:12,color:C.muted}}>{changeAmt!==null?'お釣り':'不足額'}</span><span style={{fontSize:22,fontWeight:800,color:changeAmt!==null?C.green:C.red}}>¥{(changeAmt!==null?changeAmt:shortAmt).toLocaleString()}</span></div>}
                 </div>
               )}
               {payType==='credit'&&(
