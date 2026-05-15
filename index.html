@@ -193,6 +193,13 @@ function App() {
   const showToast=(msg,type='ok')=>{setToast({msg,type});setTimeout(()=>setToast(null),2500);};
   const setCartItem=(fId,qty)=>setCart(prev=>({...prev,[fId]:Math.max(0,Math.min(remaining[fId],qty))}));
  
+  // 金額を額面に分解（greedy）
+  const denomBreakdown=(amount)=>{
+    let rem=amount;const result={};
+    for(const d of DENOMS){const n=Math.floor(rem/d.v);if(n>0){result[d.v]=n;rem-=n*d.v;}}
+    return result;
+  };
+ 
   const handleSell=async()=>{
     if(cartCount===0)return showToast('商品を選択してください','err');
     for(const f of FLAVORS){if(cart[f.id]>remaining[f.id])return showToast(`${f.name}の在庫不足`,'err');}
@@ -212,9 +219,19 @@ function App() {
       const label=batchItems.map(s=>`${FLAVORS.find(f=>f.id===s.flavor).name}x${s.qty}`).join('+')+` @¥${price}`;
       na[name]={...na[name],owed:na[name].owed+batchTotal,txns:[...na[name].txns,{id:batchId,amt:batchTotal,label,ts}]};
     }
-    setSales(newSales);setAccounts(na);
-    await Promise.all([dbSet('sales',newSales),dbSet('acct',na)]);
+    // 現金でレジを自動更新（受取金額を加算→お釣りを減算）
+    let nr={...(register||{})};
     const chg=received&&parseInt(received)>batchTotal?parseInt(received)-batchTotal:null;
+    if(payType==='cash'&&received&&parseInt(received)>=batchTotal){
+      const addMap=denomBreakdown(parseInt(received));
+      for(const[d,n] of Object.entries(addMap)) nr[d]=(nr[d]||0)+n;
+      if(chg>0){
+        const subMap=denomBreakdown(chg);
+        for(const[d,n] of Object.entries(subMap)) nr[d]=Math.max(0,(nr[d]||0)-n);
+      }
+    }
+    setSales(newSales);setAccounts(na);setRegister(nr);
+    await Promise.all([dbSet('sales',newSales),dbSet('acct',na),dbSet('register',nr)]);
     showToast(chg!==null?`お釣り ¥${chg.toLocaleString()}`:`¥${batchTotal.toLocaleString()} を記録！`);
     setCart({...EMPTY_CART});setCreditName('');setReceived('');
   };
