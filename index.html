@@ -214,6 +214,8 @@ function App() {
   const [payModal,setPayModal]=useState(null);
   const [payAmt,setPayAmt]=useState('');
   const [cancelModal,setCancelModal]=useState(null);
+  const [reconcileModal,setReconcileModal]=useState(false);
+  const [reconcileTargets,setReconcileTargets]=useState({});
   const [now,setNow]=useState(new Date());
   useEffect(()=>{const iv=setInterval(()=>setNow(new Date()),30000);return()=>clearInterval(iv);},[]);
   const [simParams,setSimParams]=useState({d1StopH:14,d1StopM:0,d2SoldOutH:13,d2SoldOutM:48});
@@ -266,6 +268,9 @@ function App() {
   const totOwed=creditList.reduce((a,x)=>a+x.owed,0);
   const totPaid=creditList.reduce((a,x)=>a+x.paid,0);
   const regTotal=Object.entries(register||{}).reduce((a,[d,c])=>a+parseInt(d)*c,0);
+  // 現金売上のみとレジ残高を比較（売掛は現金じゃないのでカウントしない）
+  const cashRevAll=validSales.filter(s=>s.type==='cash').reduce((a,s)=>a+s.total,0);
+  const cashDiff=cashRevAll-regTotal;
   const todayDiscardTotal=discardsArr.filter(d=>d.day===day).reduce((a,d)=>a+d.qty,0);
 
   const batchMap={};
@@ -334,6 +339,36 @@ function App() {
     await dbSet('discards',nd);
     showToast(`${f.name} ${discardQty}個を廃棄記録しました`);
     setDiscardModal(false);setDiscardFlavor(null);setDiscardQty(1);setDiscardReason('');setDiscardReasonCustom('');
+  };
+
+  // 複数バッチを一度に取り消し（レジ調整用）
+  const voidMultipleBatches=async(batchIds)=>{
+    if(batchIds.length===0)return;
+    let newSales=[...salesArr];
+    let na={...(accounts||{})};
+    let nr={...(register||{})};
+    for(const bId of batchIds){
+      const batchSales=newSales.filter(s=>s.batchId===bId&&!s.voided);
+      newSales=newSales.map(s=>s.batchId===bId?{...s,voided:true}:s);
+      // 売掛も戻す
+      const cs=batchSales.find(s=>s.type==='credit');
+      if(cs&&na[cs.creditName]){
+        const bt=batchSales.reduce((a,s)=>a+s.total,0);
+        na[cs.creditName]={...na[cs.creditName],owed:na[cs.creditName].owed-bt,txns:na[cs.creditName].txns.filter(t=>t.id!==bId)};
+      }
+      // レジも戻す
+      const cashSale=batchSales.find(s=>s.type==='cash'&&s.receivedDenoms);
+      if(cashSale&&cashSale.receivedDenoms){
+        const bt=batchSales.reduce((a,s)=>a+s.total,0);
+        for(const[d,n] of Object.entries(cashSale.receivedDenoms)) nr[d]=Math.max(0,(nr[d]||0)-n);
+        const chgAmt=cashSale.received-bt;
+        if(chgAmt>0){const sub=denomBreakdown(chgAmt);for(const[d,n] of Object.entries(sub)) nr[d]=(nr[d]||0)+n;}
+      }
+    }
+    setSales(newSales);setAccounts(na);setRegister(nr);
+    await Promise.all([dbSet('sales',newSales),dbSet('acct',na),dbSet('register',nr)]);
+    showToast(`${batchIds.length}件の記録を取り消しました`);
+    setReconcileModal(false);setReconcileTargets({});
   };
 
   const voidBatch=async(batchId)=>{
@@ -689,6 +724,32 @@ function App() {
                   <div style={{fontSize:10,color:C.dim,marginTop:3}}>{k.l}</div>
                 </div>
               ))}
+            </div>
+
+            {/* レジとの差額 */}
+            <div style={{background:cashDiff>0?'rgba(232,168,48,.08)':cashDiff<0?'rgba(106,172,212,.08)':'rgba(92,184,112,.08)',border:`1px solid ${cashDiff>0?'rgba(232,168,48,.25)':cashDiff<0?'rgba(106,172,212,.25)':'rgba(92,184,112,.25)'}`,borderRadius:14,padding:16}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+                <span style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:'.1em'}}>💰 レジ照合</span>
+                <span style={{fontSize:10,color:C.dim}}>現金売上 vs レジ残高</span>
+              </div>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
+                <div><div style={{fontSize:10,color:C.dim}}>現金売上（累計）</div><div style={{fontSize:15,fontWeight:700}}>¥{cashRevAll.toLocaleString()}</div></div>
+                <div style={{color:C.dim}}>−</div>
+                <div style={{textAlign:'right'}}><div style={{fontSize:10,color:C.dim}}>レジ残高</div><div style={{fontSize:15,fontWeight:700}}>¥{regTotal.toLocaleString()}</div></div>
+              </div>
+              <div style={{padding:'10px 14px',background:'rgba(0,0,0,.25)',borderRadius:10,display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:cashDiff>0?10:0}}>
+                <span style={{fontSize:12,color:C.muted}}>差額</span>
+                <span style={{fontSize:20,fontWeight:800,color:cashDiff>0?C.yellow:cashDiff<0?C.blue:C.green}}>
+                  {cashDiff>0?'+':''}¥{cashDiff.toLocaleString()}
+                </span>
+              </div>
+              {cashDiff>0&&(
+                <button onClick={()=>setReconcileModal(true)} className="bp"
+                  style={{width:'100%',background:'rgba(232,168,48,.15)',border:'1px solid rgba(232,168,48,.35)',color:C.yellow,borderRadius:11,padding:'12px',fontWeight:700,fontSize:13,cursor:'pointer'}}>
+                  ⚖ レジの金額に合わせる（−¥{cashDiff.toLocaleString()}）
+                </button>
+              )}
+              {cashDiff<0&&<div style={{fontSize:11,color:C.blue,marginTop:4}}>※レジが多いです。釣り銭や手動加算を確認してください。</div>}
             </div>
             <div style={{background:C.surface,borderRadius:18,padding:18,border:`1px solid ${C.border}`}}>
               <div style={{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.15em',marginBottom:14}}>FLAVOR BREAKDOWN</div>
@@ -1137,6 +1198,64 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* レジ照合モーダル */}
+      {reconcileModal&&(()=>{
+        // 現金の取引のみを対象に、新しい順で並べる
+        const cashBatches={};
+        validSales.filter(s=>s.type==='cash').forEach(s=>{
+          if(!cashBatches[s.batchId])cashBatches[s.batchId]={ts:s.ts,items:[],total:0,day:s.day};
+          cashBatches[s.batchId].items.push(s);
+          cashBatches[s.batchId].total+=s.total;
+        });
+        const sortedBatches=Object.entries(cashBatches).sort((a,b)=>new Date(b[1].ts)-new Date(a[1].ts));
+        const selectedTotal=Object.keys(reconcileTargets).filter(k=>reconcileTargets[k]).reduce((a,k)=>a+(cashBatches[k]?.total||0),0);
+        const remainingDiff=cashDiff-selectedTotal;
+        return(
+          <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.92)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:100,padding:16,animation:'fadeIn .15s ease'}} onClick={e=>{if(e.target===e.currentTarget){setReconcileModal(false);setReconcileTargets({});}}}>
+            <div style={{background:'#1A1A1D',borderRadius:24,padding:22,width:'100%',maxWidth:380,maxHeight:'90vh',display:'flex',flexDirection:'column',border:'1px solid rgba(232,168,48,.3)',boxShadow:'0 24px 80px rgba(0,0,0,.8)',animation:'slideUp .2s ease'}}>
+              <div style={{fontSize:17,fontWeight:800,marginBottom:6}}>⚖ レジの金額に合わせる</div>
+              <div style={{fontSize:12,color:C.muted,marginBottom:14}}>取り消す現金取引を選んでください。選択合計が差額と近づくよう調整します。</div>
+
+              <div style={{padding:'10px 14px',background:'rgba(232,168,48,.08)',borderRadius:11,marginBottom:14,border:'1px solid rgba(232,168,48,.2)'}}>
+                <div style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:5}}><span style={{color:C.muted}}>目標減額</span><span style={{fontWeight:700,color:C.yellow}}>¥{cashDiff.toLocaleString()}</span></div>
+                <div style={{display:'flex',justifyContent:'space-between',fontSize:12,marginBottom:5}}><span style={{color:C.muted}}>選択合計</span><span style={{fontWeight:700,color:selectedTotal>0?C.text:C.dim}}>¥{selectedTotal.toLocaleString()}</span></div>
+                <div style={{display:'flex',justifyContent:'space-between',fontSize:13,paddingTop:7,borderTop:`1px solid ${C.border}`,fontWeight:700}}><span style={{color:C.muted}}>調整後の差額</span><span style={{color:Math.abs(remainingDiff)<100?C.green:remainingDiff>0?C.yellow:C.red}}>{remainingDiff>=0?'+':''}¥{remainingDiff.toLocaleString()}</span></div>
+              </div>
+
+              <div style={{flex:1,overflowY:'auto',marginBottom:14}}>
+                {sortedBatches.map(([bId,b])=>{
+                  const sel=!!reconcileTargets[bId];
+                  const t=new Date(b.ts);
+                  return(
+                    <div key={bId} onClick={()=>setReconcileTargets(prev=>({...prev,[bId]:!prev[bId]}))}
+                      style={{padding:'10px 12px',background:sel?'rgba(232,168,48,.12)':'rgba(255,255,255,.03)',border:`1px solid ${sel?'rgba(232,168,48,.4)':C.border}`,borderRadius:10,marginBottom:6,cursor:'pointer',display:'flex',alignItems:'center',gap:10}}>
+                      <div style={{width:18,height:18,borderRadius:5,background:sel?C.yellow:'rgba(255,255,255,.08)',border:`1px solid ${sel?C.yellow:C.border}`,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,fontSize:12,fontWeight:800,color:'#0C0C0D'}}>{sel?'✓':''}</div>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:12,display:'flex',gap:6,flexWrap:'wrap'}}>
+                          {b.items.map(s=>{const f=FLAVORS.find(fl=>fl.id===s.flavor);return<span key={s.id} style={{color:f.color,fontWeight:600}}>{f.icon}{f.name}×{s.qty}</span>;})}
+                        </div>
+                        <div style={{fontSize:10,color:C.dim,marginTop:3}}>Day{b.day} {t.getHours()}:{String(t.getMinutes()).padStart(2,'0')}</div>
+                      </div>
+                      <span style={{fontSize:13,fontWeight:700,color:sel?C.yellow:C.text,flexShrink:0}}>¥{b.total.toLocaleString()}</span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div style={{display:'flex',gap:10}}>
+                <button onClick={()=>{setReconcileModal(false);setReconcileTargets({});}} className="bp"
+                  style={{flex:1,background:'rgba(255,255,255,.07)',border:'none',color:C.muted,borderRadius:13,padding:'13px',cursor:'pointer',fontSize:14}}>キャンセル</button>
+                <button onClick={()=>{const ids=Object.keys(reconcileTargets).filter(k=>reconcileTargets[k]);voidMultipleBatches(ids);}} className="bp"
+                  disabled={selectedTotal===0}
+                  style={{flex:2,background:selectedTotal>0?'rgba(232,168,48,.2)':'rgba(255,255,255,.05)',border:`1px solid ${selectedTotal>0?'rgba(232,168,48,.45)':C.border}`,color:selectedTotal>0?C.yellow:C.dim,borderRadius:13,padding:'13px',fontWeight:800,cursor:selectedTotal>0?'pointer':'not-allowed',fontSize:14}}>
+                  {Object.values(reconcileTargets).filter(Boolean).length}件を取り消す
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
