@@ -69,6 +69,19 @@ const EMPTY_CART = {vanilla:0,choco:0,matcha:0};
 
 // 大学祭・飲食出店の一般的な時間帯需要係数（8:30の30分は0.5扱い、その後は1時間ごと）
 // ピーク = 12時台。来場者数と購買意欲を元に推定（教養学部・五月祭の一般的傾向）
+
+// 原価計算用の定数
+const COSTS = {
+  crepePerBox:    70,         // 1箱あたりの本数
+  crepeBoxPrice:  23772,      // 1箱の価格（税抜）
+  crepeTaxRate:   0.08,       // 軽減税率8%
+  sleevePer:      100,        // スリーブ100枚あたり
+  sleevePrice:    1180,       // スリーブ100枚の価格（税込と仮定）
+};
+const PER_UNIT_CREPE = (COSTS.crepeBoxPrice * (1 + COSTS.crepeTaxRate)) / COSTS.crepePerBox;
+const PER_UNIT_SLEEVE = COSTS.sleevePrice / COSTS.sleevePer;
+const PER_UNIT_COST = PER_UNIT_CREPE + PER_UNIT_SLEEVE;
+
 const HOURLY_FACTOR = {
   8:  0.20,  // 8:30-9 開店前、ほぼ来ない（0.5h分）
   9:  0.40,  // 朝、来場者まばら
@@ -205,6 +218,8 @@ function App() {
   useEffect(()=>{const iv=setInterval(()=>setNow(new Date()),30000);return()=>clearInterval(iv);},[]);
   const [simParams,setSimParams]=useState({d1StopH:14,d1StopM:0,d2SoldOutH:13,d2SoldOutM:48});
   useEffect(()=>{const u=dbListen('simParams',setSimParams);return u;},[]);
+  const [fixedCost,setFixedCost]=useState(150000);
+  useEffect(()=>{const u=dbListen('fixedCost',setFixedCost);return u;},[]);
 
   // 廃棄モーダル用State
   const [discardModal,setDiscardModal]=useState(false);
@@ -802,6 +817,83 @@ function App() {
                 <div style={{textAlign:'right'}}><div style={{fontSize:10,color:C.dim}}>潜在</div><div style={{fontSize:15,fontWeight:700,color:C.gold}}>¥{potentialRev.toLocaleString()}</div></div>
               </div>
             </div>
+
+            {/* 収支シミュレーション */}
+            {(() => {
+              const totalSold = validSales.reduce((a,s)=>a+s.qty,0);
+              const totalDiscarded = discardsArr.reduce((a,d)=>a+d.qty,0);
+              const consumedUnits = totalSold + totalDiscarded;
+              const variableCost = Math.round(consumedUnits * PER_UNIT_COST);
+              const totalCost = variableCost + fixedCost;
+              const profit = actualRev - totalCost;
+              const profitPotential = potentialRev - (totalCost + Math.round(totalLostQty * PER_UNIT_COST));
+              const breakeven = Math.ceil(fixedCost / Math.max(1, (avgPrice || 600) - PER_UNIT_COST));
+              const updateFC = async(v)=>{setFixedCost(v); await dbSet('fixedCost', v);};
+              return (
+                <div style={{background:C.surface,borderRadius:20,padding:20,border:`1px solid ${C.border}`}}>
+                  <div style={{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.15em',marginBottom:14}}>💰 収支</div>
+
+                  {/* 利益サマリー */}
+                  <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:16}}>
+                    <div style={{padding:'12px 14px',background:profit>=0?'rgba(92,184,112,.1)':'rgba(224,88,88,.1)',border:`1px solid ${profit>=0?'rgba(92,184,112,.3)':'rgba(224,88,88,.3)'}`,borderRadius:12}}>
+                      <div style={{fontSize:9,color:C.dim,marginBottom:3}}>実績利益</div>
+                      <div style={{fontSize:20,fontWeight:800,color:profit>=0?C.green:C.red}}>¥{profit.toLocaleString()}</div>
+                    </div>
+                    <div style={{padding:'12px 14px',background:'rgba(212,168,68,.08)',border:'1px solid rgba(212,168,68,.25)',borderRadius:12}}>
+                      <div style={{fontSize:9,color:C.dim,marginBottom:3}}>潜在利益</div>
+                      <div style={{fontSize:20,fontWeight:800,color:C.gold}}>¥{profitPotential.toLocaleString()}</div>
+                    </div>
+                  </div>
+
+                  {/* 内訳 */}
+                  <div style={{fontSize:11,color:C.muted,marginBottom:8,fontWeight:700,letterSpacing:'.1em'}}>内訳</div>
+                  <div style={{display:'flex',justifyContent:'space-between',padding:'7px 0',borderBottom:`1px solid ${C.border}`,fontSize:12}}>
+                    <span style={{color:C.muted}}>売上</span>
+                    <span style={{fontWeight:700,color:C.green}}>+¥{actualRev.toLocaleString()}</span>
+                  </div>
+                  <div style={{display:'flex',justifyContent:'space-between',padding:'7px 0',borderBottom:`1px solid ${C.border}`,fontSize:12}}>
+                    <span style={{color:C.muted}}>変動費（{consumedUnits}個 × ¥{PER_UNIT_COST.toFixed(1)}）</span>
+                    <span style={{fontWeight:700,color:C.red}}>−¥{variableCost.toLocaleString()}</span>
+                  </div>
+                  <div style={{display:'flex',justifyContent:'space-between',padding:'7px 0',borderBottom:`1px solid ${C.border}`,fontSize:12}}>
+                    <span style={{color:C.muted}}>固定費</span>
+                    <span style={{fontWeight:700,color:C.red}}>−¥{fixedCost.toLocaleString()}</span>
+                  </div>
+                  <div style={{display:'flex',justifyContent:'space-between',padding:'10px 0 4px',fontSize:13,fontWeight:700}}>
+                    <span>差引</span>
+                    <span style={{color:profit>=0?C.green:C.red}}>{profit>=0?'+':''}¥{profit.toLocaleString()}</span>
+                  </div>
+
+                  {/* 単価詳細 */}
+                  <details style={{marginTop:14,padding:'10px 12px',background:'rgba(255,255,255,.03)',borderRadius:10}}>
+                    <summary style={{fontSize:11,color:C.muted,cursor:'pointer',fontWeight:600}}>単価の内訳</summary>
+                    <div style={{fontSize:11,color:C.muted,marginTop:8,lineHeight:1.7}}>
+                      クレープ生地: ¥{PER_UNIT_CREPE.toFixed(1)}/本<br/>
+                      <span style={{fontSize:10,color:C.dim,paddingLeft:12}}>(¥{COSTS.crepeBoxPrice.toLocaleString()} × 1.08 ÷ {COSTS.crepePerBox}本)</span><br/>
+                      スリーブ: ¥{PER_UNIT_SLEEVE.toFixed(1)}/枚<br/>
+                      <span style={{fontSize:10,color:C.dim,paddingLeft:12}}>(¥{COSTS.sleevePrice.toLocaleString()} ÷ {COSTS.sleevePer}枚)</span><br/>
+                      <span style={{color:C.gold,fontWeight:700}}>1個あたり計: ¥{PER_UNIT_COST.toFixed(1)}</span>
+                    </div>
+                  </details>
+
+                  {/* 固定費編集 */}
+                  <div style={{marginTop:14,padding:'12px 14px',background:'rgba(255,255,255,.04)',borderRadius:11}}>
+                    <div style={{fontSize:10,color:C.dim,letterSpacing:'.1em',marginBottom:7}}>固定費（編集可）</div>
+                    <div style={{display:'flex',alignItems:'center',gap:6}}>
+                      <span style={{color:C.muted,fontSize:14}}>¥</span>
+                      <input type="number" inputMode="numeric" value={fixedCost} onChange={e=>updateFC(parseInt(e.target.value)||0)}
+                        style={{flex:1,background:'rgba(255,255,255,.06)',border:`1px solid ${C.borderMd}`,borderRadius:9,padding:'8px 12px',color:C.text,fontSize:15,fontWeight:700}}/>
+                    </div>
+                  </div>
+
+                  {/* 損益分岐点 */}
+                  <div style={{marginTop:10,padding:'10px 14px',background:'rgba(106,172,212,.08)',border:'1px solid rgba(106,172,212,.2)',borderRadius:11,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                    <span style={{fontSize:11,color:C.muted}}>損益分岐点（@¥{avgPrice||600}）</span>
+                    <span style={{fontSize:15,fontWeight:800,color:C.blue}}>{breakeven}個</span>
+                  </div>
+                </div>
+              );
+            })()}
 
             {/* Day1: 停止 */}
             <div style={{background:C.surface,borderRadius:18,padding:18,border:`1px solid ${C.border}`}}>
