@@ -27,7 +27,7 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
 <div id="root"></div>
 <script type="text/babel">
 const { useState, useEffect } = React;
-
+ 
 firebase.initializeApp({
   apiKey:            "AIzaSyD2qxIpd1Lo6OKqeN52NC8DPTOudW39qVM",
   authDomain:        "mayfes2026-pos.firebaseapp.com",
@@ -50,7 +50,7 @@ const listenConnected = (cb) => {
   r.on('value', snap => cb(snap.val() === true));
   return () => r.off();
 };
-
+ 
 const DEVICE_ID = '端末-' + Math.random().toString(36).substr(2,4).toUpperCase();
 const INIT_STOCK = {1:{vanilla:210,choco:140,matcha:70},2:{vanilla:140,choco:140,matcha:70}};
 const FLAVORS = [
@@ -65,7 +65,7 @@ const DENOMS = [
   {v:100,l:'¥100',icon:'🪙'},{v:50,l:'¥50',icon:'🪙'},{v:10,l:'¥10',icon:'🪙'},
 ];
 const EMPTY_CART = {vanilla:0,choco:0,matcha:0};
-
+ 
 const TIME_SLOTS = ["08:30-09:00","09:00-10:00","10:00-11:00","11:00-12:00","12:00-13:00","13:00-14:00","14:00-15:00","15:00-16:00","16:00-17:00","17:00-18:00","18:00-19:00"];
 const SHIFTS = {
   1: [
@@ -112,7 +112,7 @@ const getCurrentSlot = (now) => {
   if(t<9*60)return 0;
   return Math.floor((t-9*60)/60)+1;
 };
-
+ 
 const DISCARD_REASONS = ['試食・テスト','落下・破損','品質不良','その他'];
 const C = {
   bg:'#0C0C0D',surface:'#141416',surfaceHi:'#1C1C1F',
@@ -121,7 +121,7 @@ const C = {
   green:'#5CB870',yellow:'#E8A830',red:'#E05858',blue:'#6AACD4',purple:'#9E88D8',teal:'#48C4A8',
   orange:'#E8824A',
 };
-
+ 
 function ChangeCalc() {
   const [cp,setCp]=useState(700);const [cq,setCq]=useState(1);const [cr,setCr]=useState('');
   const total=cp*cq;
@@ -165,7 +165,7 @@ function ChangeCalc() {
     </div>
   );
 }
-
+ 
 function App() {
   const [sales,setSales]=useState([]);
   const [accounts,setAccounts]=useState({});
@@ -186,14 +186,16 @@ function App() {
   const [cancelModal,setCancelModal]=useState(null);
   const [now,setNow]=useState(new Date());
   useEffect(()=>{const iv=setInterval(()=>setNow(new Date()),30000);return()=>clearInterval(iv);},[]);
-
+  const [simParams,setSimParams]=useState({d1StopH:14,d1StopM:0,d2SoldOutH:13,d2SoldOutM:48});
+  useEffect(()=>{const u=dbListen('simParams',setSimParams);return u;},[]);
+ 
   // 廃棄モーダル用State
   const [discardModal,setDiscardModal]=useState(false);
   const [discardFlavor,setDiscardFlavor]=useState(null);
   const [discardQty,setDiscardQty]=useState(1);
   const [discardReason,setDiscardReason]=useState('');
   const [discardReasonCustom,setDiscardReasonCustom]=useState('');
-
+ 
   useEffect(()=>{
     const uns=[
       dbListen('sales',setSales),
@@ -205,16 +207,16 @@ function App() {
     ];
     return()=>uns.forEach(u=>u());
   },[]);
-
+ 
   const effectiveInit=(d,fId)=>INIT_STOCK[d][fId]+(d===2?(carryover[fId]||0):0);
   const salesArr=Array.isArray(sales)?sales:[];
   const discardsArr=Array.isArray(discards)?discards:[];
-
+ 
   // 廃棄数も在庫から引く
   const discardedToday=discardsArr.filter(d=>d.day===day).reduce((a,d)=>({...a,[d.flavor]:(a[d.flavor]||0)+d.qty}),{});
   const soldToday=salesArr.filter(s=>s.day===day&&!s.voided).reduce((a,s)=>({...a,[s.flavor]:(a[s.flavor]||0)+s.qty}),{});
   const remaining=Object.fromEntries(FLAVORS.map(f=>[f.id,Math.max(0,effectiveInit(day,f.id)-(soldToday[f.id]||0)-(discardedToday[f.id]||0))]));
-
+ 
   const cartCount=Object.values(cart).reduce((a,q)=>a+q,0);
   const cartTotal=cartCount*price;
   const receivedTotal=Object.entries(receivedDenoms).reduce((a,[d,n])=>a+parseInt(d)*n,0);
@@ -233,24 +235,24 @@ function App() {
   const totPaid=creditList.reduce((a,x)=>a+x.paid,0);
   const regTotal=Object.entries(register||{}).reduce((a,[d,c])=>a+parseInt(d)*c,0);
   const todayDiscardTotal=discardsArr.filter(d=>d.day===day).reduce((a,d)=>a+d.qty,0);
-
+ 
   const batchMap={};
   [...daySales].reverse().forEach(s=>{if(!batchMap[s.batchId])batchMap[s.batchId]=[];batchMap[s.batchId].push(s);});
   const batches=Object.values(batchMap);
   const voidedMap={};
   salesArr.filter(s=>s.day===day&&s.voided).forEach(s=>{if(!voidedMap[s.batchId])voidedMap[s.batchId]=[];voidedMap[s.batchId].push(s);});
   const voidedBatches=Object.values(voidedMap);
-
+ 
   const showToast=(msg,type='ok')=>{setToast({msg,type});setTimeout(()=>setToast(null),2500);};
   const setCartItem=(fId,qty)=>setCart(prev=>({...prev,[fId]:Math.max(0,Math.min(remaining[fId],qty))}));
-
+ 
   // 金額を額面に分解（greedy）
   const denomBreakdown=(amount)=>{
     let rem=amount;const result={};
     for(const d of DENOMS){const n=Math.floor(rem/d.v);if(n>0){result[d.v]=n;rem-=n*d.v;}}
     return result;
   };
-
+ 
   const handleSell=async()=>{
     if(cartCount===0)return showToast('商品を選択してください','err');
     for(const f of FLAVORS){if(cart[f.id]>remaining[f.id])return showToast(`${f.name}の在庫不足`,'err');}
@@ -286,7 +288,7 @@ function App() {
     showToast(chg!==null?`お釣り ¥${chg.toLocaleString()}`:`¥${batchTotal.toLocaleString()} を記録！`);
     setCart({...EMPTY_CART});setCreditName('');setReceivedDenoms(Object.fromEntries(DENOMS.map(d=>[d.v,0])));
   };
-
+ 
   // 廃棄処理
   const handleDiscard=async()=>{
     if(!discardFlavor)return showToast('フレーバーを選択してください','err');
@@ -301,7 +303,7 @@ function App() {
     showToast(`${f.name} ${discardQty}個を廃棄記録しました`);
     setDiscardModal(false);setDiscardFlavor(null);setDiscardQty(1);setDiscardReason('');setDiscardReasonCustom('');
   };
-
+ 
   const voidBatch=async(batchId)=>{
     const batchSales=salesArr.filter(s=>s.batchId===batchId&&!s.voided);
     const newSales=salesArr.map(s=>s.batchId===batchId?{...s,voided:true}:s);
@@ -326,14 +328,14 @@ function App() {
     await Promise.all([dbSet('sales',newSales),dbSet('acct',na),dbSet('register',nr)]);
     showToast('注文を取り消しました');setCancelModal(null);
   };
-
+ 
   const handlePay=async()=>{
     const amt=parseInt(payAmt);if(!amt||amt<=0)return showToast('金額を入力してください','err');
     const na={...(accounts||{}),[payModal]:{...accounts[payModal],paid:(accounts[payModal].paid||0)+amt}};
     setAccounts(na);await dbSet('acct',na);
     showToast(`${payModal}さんの支払いを記録しました`);setPayModal(null);setPayAmt('');
   };
-
+ 
   const doCarryover=async()=>{
     const d1=salesArr.filter(s=>s.day===1&&!s.voided).reduce((a,s)=>({...a,[s.flavor]:(a[s.flavor]||0)+s.qty}),{});
     const d1disc=discardsArr.filter(d=>d.day===1).reduce((a,d)=>({...a,[d.flavor]:(a[d.flavor]||0)+d.qty}),{});
@@ -341,17 +343,17 @@ function App() {
     setCarryover(co);await dbSet('carryover',co);
     showToast(FLAVORS.map(f=>`${f.name}+${co[f.id]}`).join(' / ')+' 引継ぎ完了');
   };
-
+ 
   const updateRegister=async(denom,delta)=>{
     const nr={...(register||{}),[denom]:Math.max(0,((register||{})[denom]||0)+delta)};
     setRegister(nr);await dbSet('register',nr);
   };
-
-  const TABS=[{id:'sale',icon:'🛒',label:'販売'},{id:'inventory',icon:'📦',label:'在庫'},{id:'shift',icon:'👥',label:'シフト'},{id:'credit',icon:'💳',label:'売掛'},{id:'register',icon:'💰',label:'レジ'},{id:'summary',icon:'📊',label:'集計'}];
-
+ 
+  const TABS=[{id:'sale',icon:'🛒',label:'販売'},{id:'inventory',icon:'📦',label:'在庫'},{id:'shift',icon:'👥',label:'シフト'},{id:'credit',icon:'💳',label:'売掛'},{id:'register',icon:'💰',label:'レジ'},{id:'summary',icon:'📊',label:'集計'},{id:'sim',icon:'📈',label:'分析'}];
+ 
   return (
     <div style={{minHeight:'100vh',background:C.bg,color:C.text,display:'flex',flexDirection:'column',maxWidth:480,margin:'0 auto',userSelect:'none'}}>
-
+ 
       {/* HEADER */}
       <header style={{padding:'14px 20px 12px',borderBottom:`1px solid ${C.border}`,position:'sticky',top:0,zIndex:10,background:`${C.bg}F2`,backdropFilter:'blur(16px)'}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start'}}>
@@ -382,9 +384,9 @@ function App() {
           </div>
         </div>
       </header>
-
+ 
       <main style={{flex:1,padding:'18px 18px 96px',overflowY:'auto'}}>
-
+ 
         {/* 販売タブ */}
         {tab==='sale'&&(
           <div style={{display:'flex',flexDirection:'column',gap:14,animation:'slideUp .2s ease'}}>
@@ -465,7 +467,7 @@ function App() {
               style={{background:cartCount>0?`linear-gradient(135deg,${C.gold},#B88A30)`:C.surfaceHi,color:cartCount>0?'#0C0C0D':C.dim,border:'none',borderRadius:16,padding:'18px',fontWeight:800,fontSize:17,cursor:cartCount>0?'pointer':'not-allowed',transition:'all .14s',boxShadow:cartCount>0?`0 4px 28px rgba(212,168,68,.45)`:'none'}}>
               {cartCount>0?`✓ 売る！　¥${cartTotal.toLocaleString()}`:'商品を選択してください'}
             </button>
-
+ 
             {/* 廃棄ボタン */}
             <button onClick={()=>setDiscardModal(true)} className="bp"
               style={{background:'rgba(232,130,74,.08)',border:'1px solid rgba(232,130,74,.25)',color:C.orange,borderRadius:14,padding:'13px',fontWeight:700,fontSize:14,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',gap:8}}>
@@ -474,7 +476,7 @@ function App() {
             </button>
           </div>
         )}
-
+ 
         {/* 在庫タブ */}
         {tab==='inventory'&&(
           <div style={{display:'flex',flexDirection:'column',gap:14,animation:'slideUp .2s ease'}}>
@@ -510,8 +512,8 @@ function App() {
             </div>
           </div>
         )}
-
-
+ 
+ 
         {/* シフトタブ */}
         {tab==='shift'&&(()=>{
           const slot=getCurrentSlot(now);
@@ -539,7 +541,7 @@ function App() {
                 <div style={{fontSize:14,color:C.muted,padding:'10px 0'}}>営業時間外（8:30 ~ 19:00）</div>
               )}
             </div>
-
+ 
             <div style={{background:C.surface,borderRadius:18,padding:18,border:`1px solid ${C.border}`}}>
               <div style={{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.15em',marginBottom:14}}>時間帯別 出勤人数</div>
               {TIME_SLOTS.map((ts,i)=>{
@@ -558,7 +560,7 @@ function App() {
                 );
               })}
             </div>
-
+ 
             <div style={{background:C.surface,borderRadius:18,padding:18,border:`1px solid ${C.border}`}}>
               <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14}}>
                 <span style={{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.15em'}}>個人別シフト Day{day}</span>
@@ -583,7 +585,7 @@ function App() {
           </div>
           );
         })()}
-
+ 
         {/* 売掛タブ */}
         {tab==='credit'&&(
           <div style={{display:'flex',flexDirection:'column',gap:14,animation:'slideUp .2s ease'}}>
@@ -615,7 +617,7 @@ function App() {
             })}
           </div>
         )}
-
+ 
         {/* レジタブ */}
         {tab==='register'&&(
           <div style={{display:'flex',flexDirection:'column',gap:14,animation:'slideUp .2s ease'}}>
@@ -644,7 +646,7 @@ function App() {
             </div>
           </div>
         )}
-
+ 
         {/* 集計タブ */}
         {tab==='summary'&&(
           <div style={{display:'flex',flexDirection:'column',gap:14,animation:'slideUp .2s ease'}}>
@@ -665,7 +667,7 @@ function App() {
               <div style={{width:1,background:C.border}}/>
               <div style={{flex:1,textAlign:'center'}}><div style={{fontSize:20,fontWeight:800,color:C.gold}}>¥{creditRevDay.toLocaleString()}</div><div style={{fontSize:11,color:C.muted,marginTop:3}}>💳 売掛</div></div>
             </div>
-
+ 
             {/* 廃棄履歴 */}
             {discardsArr.filter(d=>d.day===day).length>0&&(
               <div style={{background:C.surface,borderRadius:18,padding:18,border:`1px solid rgba(232,130,74,.2)`}}>
@@ -685,7 +687,7 @@ function App() {
                 })}
               </div>
             )}
-
+ 
             <div style={{background:C.surface,borderRadius:18,padding:18,border:`1px solid ${C.border}`}}>
               <div style={{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.15em',marginBottom:14}}>取引履歴 / 注文取り消し</div>
               {batches.length===0?<div style={{textAlign:'center',color:C.dim,fontSize:13,padding:'16px 0'}}>まだ取引がありません</div>:batches.map(batch=>{
@@ -695,8 +697,191 @@ function App() {
             </div>
           </div>
         )}
+ 
+        {/* 分析タブ（機会損失シミュレーション） */}
+        {tab==='sim'&&(()=>{
+          // 時間帯ごとの販売数を集計（指定日の有効な販売のみ）
+          const hourlyByDay={1:Array(24).fill(0),2:Array(24).fill(0)};
+          const hourlyRevByDay={1:Array(24).fill(0),2:Array(24).fill(0)};
+          validSales.forEach(s=>{
+            const h=new Date(s.ts).getHours();
+            if(hourlyByDay[s.day]){hourlyByDay[s.day][h]+=s.qty;hourlyRevByDay[s.day][h]+=s.total;}
+          });
+          // Day1の停止時刻、Day2の売り切れ時刻
+          const d1StopMin=simParams.d1StopH*60+simParams.d1StopM;
+          const d2SoldOutMin=simParams.d2SoldOutH*60+simParams.d2SoldOutM;
+          const closingMin=19*60;
+ 
+          // Day1: 停止前(8:30〜停止時刻)の販売ペース
+          const d1ActiveSales=validSales.filter(s=>{const t=new Date(s.ts);const m=t.getHours()*60+t.getMinutes();return s.day===1&&m<d1StopMin;});
+          const d1ActiveQty=d1ActiveSales.reduce((a,s)=>a+s.qty,0);
+          const d1ActiveRev=d1ActiveSales.reduce((a,s)=>a+s.total,0);
+          const d1ActiveHrs=Math.max(0.1,(d1StopMin-(8*60+30))/60);
+          const d1PerHr=d1ActiveQty/d1ActiveHrs;
+          const d1RevPerHr=d1ActiveRev/d1ActiveHrs;
+          const d1LostHrs=Math.max(0,(closingMin-d1StopMin)/60);
+          const d1EstLostQty=Math.round(d1PerHr*d1LostHrs);
+          const d1EstLostRev=Math.round(d1RevPerHr*d1LostHrs);
+ 
+          // Day2: 売り切れ前の販売ペース
+          const d2ActiveSales=validSales.filter(s=>{const t=new Date(s.ts);const m=t.getHours()*60+t.getMinutes();return s.day===2&&m<d2SoldOutMin;});
+          const d2ActiveQty=d2ActiveSales.reduce((a,s)=>a+s.qty,0);
+          const d2ActiveRev=d2ActiveSales.reduce((a,s)=>a+s.total,0);
+          const d2ActiveHrs=Math.max(0.1,(d2SoldOutMin-(8*60+30))/60);
+          const d2PerHr=d2ActiveQty/d2ActiveHrs;
+          const d2RevPerHr=d2ActiveRev/d2ActiveHrs;
+          const d2LostHrs=Math.max(0,(closingMin-d2SoldOutMin)/60);
+          const d2EstLostQty=Math.round(d2PerHr*d2LostHrs);
+          const d2EstLostRev=Math.round(d2RevPerHr*d2LostHrs);
+ 
+          // フレーバー別の構成比（全期間）
+          const flavorRatio={};
+          const totalQty=validSales.reduce((a,s)=>a+s.qty,0);
+          FLAVORS.forEach(f=>{flavorRatio[f.id]=totalQty?validSales.filter(s=>s.flavor===f.id).reduce((a,s)=>a+s.qty,0)/totalQty:0;});
+ 
+          // 合計
+          const totalLostQty=d1EstLostQty+d2EstLostQty;
+          const totalLostRev=d1EstLostRev+d2EstLostRev;
+          const actualRev=allRev;
+          const potentialRev=actualRev+totalLostRev;
+ 
+          const updateSim=async(k,v)=>{const np={...simParams,[k]:v};setSimParams(np);await dbSet('simParams',np);};
+ 
+          return(
+          <div style={{display:'flex',flexDirection:'column',gap:14,animation:'slideUp .2s ease'}}>
+ 
+            {/* ヒーローKPI */}
+            <div style={{background:`linear-gradient(135deg,rgba(232,130,74,.15),rgba(212,168,68,.1))`,borderRadius:20,padding:22,border:'1px solid rgba(232,130,74,.3)'}}>
+              <div style={{fontSize:9,color:C.dim,letterSpacing:'.15em',marginBottom:6}}>機会損失（推定）</div>
+              <div style={{fontSize:36,fontWeight:800,color:C.orange,lineHeight:1.1}}>¥{totalLostRev.toLocaleString()}</div>
+              <div style={{fontSize:13,color:C.muted,marginTop:6}}>+ 約 <span style={{color:C.orange,fontWeight:700}}>{totalLostQty}個</span> 売れた可能性</div>
+              <div style={{marginTop:14,padding:'10px 14px',background:'rgba(0,0,0,.25)',borderRadius:10,display:'flex',justifyContent:'space-between'}}>
+                <div><div style={{fontSize:10,color:C.dim}}>実績</div><div style={{fontSize:15,fontWeight:700,color:C.text}}>¥{actualRev.toLocaleString()}</div></div>
+                <div style={{color:C.dim,fontSize:18,alignSelf:'center'}}>→</div>
+                <div style={{textAlign:'right'}}><div style={{fontSize:10,color:C.dim}}>潜在</div><div style={{fontSize:15,fontWeight:700,color:C.gold}}>¥{potentialRev.toLocaleString()}</div></div>
+              </div>
+            </div>
+ 
+            {/* Day1: 停止 */}
+            <div style={{background:C.surface,borderRadius:18,padding:18,border:`1px solid ${C.border}`}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+                <span style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:'.1em'}}>📅 DAY1 — 出展停止</span>
+                <span style={{fontSize:10,color:C.dim}}>停止時刻を編集</span>
+              </div>
+              <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:14}}>
+                <input type="number" min="8" max="19" value={simParams.d1StopH} onChange={e=>updateSim('d1StopH',parseInt(e.target.value)||0)}
+                  style={{width:50,background:'rgba(255,255,255,.06)',border:`1px solid ${C.borderMd}`,borderRadius:8,padding:'7px 4px',color:C.text,fontSize:15,textAlign:'center'}}/>
+                <span style={{color:C.muted}}>時</span>
+                <input type="number" min="0" max="59" value={simParams.d1StopM} onChange={e=>updateSim('d1StopM',parseInt(e.target.value)||0)}
+                  style={{width:50,background:'rgba(255,255,255,.06)',border:`1px solid ${C.borderMd}`,borderRadius:8,padding:'7px 4px',color:C.text,fontSize:15,textAlign:'center'}}/>
+                <span style={{color:C.muted}}>分に停止</span>
+              </div>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+                <div style={{padding:'10px 12px',background:'rgba(255,255,255,.04)',borderRadius:10}}>
+                  <div style={{fontSize:10,color:C.dim,marginBottom:3}}>営業中ペース</div>
+                  <div style={{fontSize:16,fontWeight:700,color:C.blue}}>{d1PerHr.toFixed(1)}個/h</div>
+                  <div style={{fontSize:10,color:C.dim,marginTop:2}}>¥{Math.round(d1RevPerHr).toLocaleString()}/h</div>
+                </div>
+                <div style={{padding:'10px 12px',background:'rgba(232,130,74,.08)',borderRadius:10,border:'1px solid rgba(232,130,74,.2)'}}>
+                  <div style={{fontSize:10,color:C.dim,marginBottom:3}}>失った {d1LostHrs.toFixed(1)}時間</div>
+                  <div style={{fontSize:16,fontWeight:700,color:C.orange}}>+{d1EstLostQty}個</div>
+                  <div style={{fontSize:10,color:C.orange,marginTop:2}}>¥{d1EstLostRev.toLocaleString()}</div>
+                </div>
+              </div>
+            </div>
+ 
+            {/* Day2: 売り切れ */}
+            <div style={{background:C.surface,borderRadius:18,padding:18,border:`1px solid ${C.border}`}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+                <span style={{fontSize:11,fontWeight:700,color:C.muted,letterSpacing:'.1em'}}>📅 DAY2 — 売り切れ</span>
+                <span style={{fontSize:10,color:C.dim}}>売切時刻を編集</span>
+              </div>
+              <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:14}}>
+                <input type="number" min="8" max="19" value={simParams.d2SoldOutH} onChange={e=>updateSim('d2SoldOutH',parseInt(e.target.value)||0)}
+                  style={{width:50,background:'rgba(255,255,255,.06)',border:`1px solid ${C.borderMd}`,borderRadius:8,padding:'7px 4px',color:C.text,fontSize:15,textAlign:'center'}}/>
+                <span style={{color:C.muted}}>時</span>
+                <input type="number" min="0" max="59" value={simParams.d2SoldOutM} onChange={e=>updateSim('d2SoldOutM',parseInt(e.target.value)||0)}
+                  style={{width:50,background:'rgba(255,255,255,.06)',border:`1px solid ${C.borderMd}`,borderRadius:8,padding:'7px 4px',color:C.text,fontSize:15,textAlign:'center'}}/>
+                <span style={{color:C.muted}}>分に売切</span>
+              </div>
+              <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
+                <div style={{padding:'10px 12px',background:'rgba(255,255,255,.04)',borderRadius:10}}>
+                  <div style={{fontSize:10,color:C.dim,marginBottom:3}}>営業中ペース</div>
+                  <div style={{fontSize:16,fontWeight:700,color:C.blue}}>{d2PerHr.toFixed(1)}個/h</div>
+                  <div style={{fontSize:10,color:C.dim,marginTop:2}}>¥{Math.round(d2RevPerHr).toLocaleString()}/h</div>
+                </div>
+                <div style={{padding:'10px 12px',background:'rgba(232,130,74,.08)',borderRadius:10,border:'1px solid rgba(232,130,74,.2)'}}>
+                  <div style={{fontSize:10,color:C.dim,marginBottom:3}}>失った {d2LostHrs.toFixed(1)}時間</div>
+                  <div style={{fontSize:16,fontWeight:700,color:C.orange}}>+{d2EstLostQty}個</div>
+                  <div style={{fontSize:10,color:C.orange,marginTop:2}}>¥{d2EstLostRev.toLocaleString()}</div>
+                </div>
+              </div>
+            </div>
+ 
+            {/* 時間帯別グラフ */}
+            <div style={{background:C.surface,borderRadius:18,padding:18,border:`1px solid ${C.border}`}}>
+              <div style={{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.15em',marginBottom:14}}>HOURLY SALES PACE</div>
+              {[1,2].map(d=>{
+                const maxH=Math.max(...hourlyByDay[d],1);
+                return(
+                  <div key={d} style={{marginBottom:14}}>
+                    <div style={{fontSize:11,fontWeight:700,color:C.gold,marginBottom:8}}>Day {d}</div>
+                    {Array.from({length:11},(_,i)=>i+8).map(h=>{
+                      const q=hourlyByDay[d][h]||0;
+                      const r=hourlyRevByDay[d][h]||0;
+                      const isLost=(d===1&&h*60>=d1StopMin)||(d===2&&h*60>=d2SoldOutMin);
+                      const pct=(q/maxH)*100;
+                      return(
+                        <div key={h} style={{display:'flex',alignItems:'center',gap:8,marginBottom:3}}>
+                          <span style={{fontSize:10,color:C.dim,width:30,flexShrink:0}}>{h}:00</span>
+                          <div style={{flex:1,height:14,background:'rgba(255,255,255,.04)',borderRadius:3,overflow:'hidden',position:'relative'}}>
+                            <div style={{height:'100%',width:`${pct}%`,background:isLost?'rgba(232,130,74,.5)':`linear-gradient(90deg,${C.gold},${C.gold}80)`,borderRadius:3,transition:'width .5s ease'}}/>
+                          </div>
+                          <span style={{fontSize:10,fontWeight:700,color:q>0?C.text:C.dim,width:32,textAlign:'right'}}>{q}個</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+ 
+            {/* フレーバー別推定 */}
+            <div style={{background:C.surface,borderRadius:18,padding:18,border:`1px solid ${C.border}`}}>
+              <div style={{fontSize:10,fontWeight:700,color:C.muted,letterSpacing:'.15em',marginBottom:14}}>失った販売数（フレーバー別推定）</div>
+              {FLAVORS.map(f=>{
+                const lostQ=Math.round(totalLostQty*flavorRatio[f.id]);
+                const ratio=Math.round(flavorRatio[f.id]*100);
+                return(
+                  <div key={f.id} style={{display:'flex',alignItems:'center',padding:'8px 0',borderBottom:`1px solid ${C.border}`}}>
+                    <span style={{fontSize:20,marginRight:10}}>{f.icon}</span>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:13,fontWeight:600,color:f.color}}>{f.name}</div>
+                      <div style={{fontSize:10,color:C.dim,marginTop:1}}>構成比 {ratio}%</div>
+                    </div>
+                    <div style={{textAlign:'right'}}>
+                      <div style={{fontSize:15,fontWeight:700,color:C.orange}}>+{lostQ}個</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+ 
+            {/* 提案 */}
+            <div style={{background:'rgba(72,196,168,.06)',borderRadius:14,padding:16,border:'1px solid rgba(72,196,168,.2)'}}>
+              <div style={{fontSize:11,fontWeight:700,color:C.teal,marginBottom:8}}>💡 次回への示唆</div>
+              <div style={{fontSize:12,color:C.muted,lineHeight:1.6}}>
+                Day2は{((d2EstLostQty/(d2ActiveQty||1))*100).toFixed(0)}%の追加需要があった可能性。<br/>
+                次回は<b style={{color:C.text}}>{Math.round((d2ActiveQty+d2EstLostQty)*1.1)}個</b>程度の在庫を確保すると安全圏。<br/>
+                <span style={{fontSize:11,color:C.dim,marginTop:6,display:'block'}}>※直前ペースを線形外挿。夕方の落ち込みや天候は加味されません。</span>
+              </div>
+            </div>
+          </div>
+          );
+        })()}
+ 
       </main>
-
+ 
       {/* BOTTOM NAV */}
       <nav style={{position:'fixed',bottom:0,left:'50%',transform:'translateX(-50%)',width:'100%',maxWidth:480,background:`${C.bg}F5`,backdropFilter:'blur(16px)',borderTop:`1px solid ${C.border}`,display:'flex',padding:'8px 0 14px',zIndex:10}}>
         {TABS.map(t=>(
@@ -708,16 +893,16 @@ function App() {
           </button>
         ))}
       </nav>
-
+ 
       {/* TOAST */}
       {toast&&<div style={{position:'fixed',bottom:84,left:'50%',transform:'translateX(-50%)',background:toast.type==='err'?C.red:'rgba(16,16,18,.97)',border:toast.type==='err'?'none':`1px solid rgba(212,168,68,.4)`,color:toast.type==='err'?'#fff':C.gold,padding:'11px 24px',borderRadius:100,fontWeight:700,fontSize:13,whiteSpace:'nowrap',zIndex:200,pointerEvents:'none',boxShadow:'0 8px 32px rgba(0,0,0,.7)',animation:'slideUp .18s ease'}}>{toast.type==='err'?'⚠ ':'✓ '}{toast.msg}</div>}
-
+ 
       {/* 廃棄モーダル */}
       {discardModal&&(
         <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.88)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:100,padding:24,animation:'fadeIn .15s ease'}} onClick={e=>{if(e.target===e.currentTarget){setDiscardModal(false);setDiscardFlavor(null);setDiscardQty(1);setDiscardReason('');setDiscardReasonCustom('');}}}>
           <div style={{background:'#1A1A1D',borderRadius:24,padding:26,width:'100%',maxWidth:360,border:'1px solid rgba(232,130,74,.3)',boxShadow:'0 24px 80px rgba(0,0,0,.8)',animation:'slideUp .2s ease'}}>
             <div style={{fontSize:18,fontWeight:800,marginBottom:16}}>🗑 廃棄を記録する</div>
-
+ 
             {/* フレーバー選択 */}
             <div style={{fontSize:9,color:C.dim,letterSpacing:'.12em',marginBottom:8}}>フレーバー</div>
             <div style={{display:'flex',gap:8,marginBottom:16}}>
@@ -730,7 +915,7 @@ function App() {
                 </button>
               ))}
             </div>
-
+ 
             {/* 個数 */}
             <div style={{fontSize:9,color:C.dim,letterSpacing:'.12em',marginBottom:8}}>個数</div>
             <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:16}}>
@@ -738,7 +923,7 @@ function App() {
               <span style={{flex:1,textAlign:'center',fontSize:28,fontWeight:800,color:C.orange}}>{discardQty}</span>
               <button onClick={()=>setDiscardQty(q=>discardFlavor?Math.min(remaining[discardFlavor],q+1):q+1)} className="bp" style={{background:C.surfaceHi,border:'none',color:C.text,borderRadius:9,width:38,height:38,fontSize:22,cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center'}}>＋</button>
             </div>
-
+ 
             {/* 理由 */}
             <div style={{fontSize:9,color:C.dim,letterSpacing:'.12em',marginBottom:8}}>理由</div>
             <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:6,marginBottom:10}}>
@@ -753,7 +938,7 @@ function App() {
               <input type="text" placeholder="理由を入力" value={discardReasonCustom} onChange={e=>setDiscardReasonCustom(e.target.value)}
                 style={{width:'100%',background:'rgba(255,255,255,.06)',border:`1px solid ${C.borderMd}`,borderRadius:11,padding:'10px 14px',color:C.text,fontSize:14,marginBottom:10}}/>
             )}
-
+ 
             <div style={{display:'flex',gap:10,marginTop:6}}>
               <button onClick={()=>{setDiscardModal(false);setDiscardFlavor(null);setDiscardQty(1);setDiscardReason('');setDiscardReasonCustom('');}} className="bp"
                 style={{flex:1,background:'rgba(255,255,255,.07)',border:'none',color:C.muted,borderRadius:13,padding:'14px',cursor:'pointer',fontSize:14}}>
@@ -767,7 +952,7 @@ function App() {
           </div>
         </div>
       )}
-
+ 
       {/* 支払いモーダル */}
       {payModal&&(
         <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.88)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:100,padding:24,animation:'fadeIn .15s ease'}} onClick={e=>{if(e.target===e.currentTarget){setPayModal(null);setPayAmt('');}}}>
@@ -783,7 +968,7 @@ function App() {
           </div>
         </div>
       )}
-
+ 
       {/* 注文取消確認モーダル */}
       {cancelModal&&(
         <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.88)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:100,padding:24,animation:'fadeIn .15s ease'}} onClick={e=>{if(e.target===e.currentTarget)setCancelModal(null);}}>
@@ -800,9 +985,10 @@ function App() {
     </div>
   );
 }
-
+ 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(<App/>);
 </script>
 </body>
 </html>
+ 
